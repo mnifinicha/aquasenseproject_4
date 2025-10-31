@@ -1,0 +1,127 @@
+{
+  "project_info": {
+    "project_number": "395577249681",
+    "firebase_url": "https://smart-buoy-system-d96cb-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "smart-buoy-system-d96cb",
+    "storage_bucket": "smart-buoy-system-d96cb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:395577249681:android:e198532d78797541abd430",
+        "android_client_info": {
+          "package_name": "com.example.aquasenseapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "395577249681-ttoism4t1qir995ro7iimrf3ocksmshc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.aquasenseapp",
+            "certificate_hash": "4910f05d4ca562e1e5099d9af36899ec3d5bb65c"
+          }
+        },
+        {
+          "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClKqBS349OqgpDq-TpD27DKnIBwOsNIx8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "395577249681-3cbkudgridetkn98311icco6bu77ng35.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.buoyproject"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:395577249681:android:76b48fbd959a1dffabd430",
+        "android_client_info": {
+          "package_name": "com.example.aquasenseproject"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClKqBS349OqgpDq-TpD27DKnIBwOsNIx8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "395577249681-3cbkudgridetkn98311icco6bu77ng35.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.buoyproject"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:395577249681:android:4ca8cd8985230040abd430",
+        "android_client_info": {
+          "package_name": "com.example.buoyproject"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClKqBS349OqgpDq-TpD27DKnIBwOsNIx8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "395577249681-1ighk8r4ufomktraof9so3s1u9uut01c.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "395577249681-3cbkudgridetkn98311icco6bu77ng35.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.buoyproject"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
