@@ -1,12 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-
 import 'dart:convert';
 import 'package:flutter/services.dart';
-import 'package:aquasenseproject/addbuoy/addbuoy.dart';
+
+// ✅✅ เพิ่ม 2 อันนี้
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../addbuoy/addbuoy.dart';
 
 class AddressInformationScreen extends StatefulWidget {
   const AddressInformationScreen({Key? key}) : super(key: key);
@@ -19,8 +19,10 @@ class AddressInformationScreen extends StatefulWidget {
 class _AddressInformationScreenState extends State<AddressInformationScreen> {
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
-  final TextEditingController _houseNumberController = TextEditingController();
-  final TextEditingController _villageController = TextEditingController();
+
+  // ✅ เหลือช่องเดียว
+  final TextEditingController _addressController = TextEditingController();
+
   final TextEditingController _postalCodeController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -35,63 +37,24 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
   List<String> _subdistricts = [];
 
   @override
-  void dispose() {
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _houseNumberController.dispose();
-    _villageController.dispose();
-    _postalCodeController.dispose();
-    _phoneController.dispose();
-    super.dispose();
-  }
-
-  @override
   void initState() {
     super.initState();
     _loadProvinces();
   }
 
-  Future<void> _saveUserToFirestore() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      // ถ้ายังไม่ได้ login จะใช้ timestamp เป็น uid ชั่วคราว
-      final uid = user?.uid ?? DateTime.now().millisecondsSinceEpoch.toString();
-
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'uid': uid,
-        'name': _firstNameController.text.trim(),
-        'surname': _lastNameController.text.trim(),
-        'line1': _houseNumberController.text.trim(),
-        'village': _villageController.text.trim(),
-        'province': _selectedProvince,
-        'district': _selectedDistrict,
-        'subdistrict': _selectedSubdistrict,
-        'postal_code': _postalCodeController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'email': user?.email ?? '',
-        'role': 'user',
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      }, SetOptions(merge: true)); // ป้องกันทับ field อื่นใน doc เดิม
-
-      debugPrint('✅ Firestore: User saved successfully');
-    } catch (e) {
-      debugPrint('❌ Firestore save error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error saving to Firestore: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _addressController.dispose();
+    _postalCodeController.dispose();
+    _phoneController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadProvinces() async {
     try {
       final provinces = await getProvinces();
-      if (!mounted) return;
       setState(() {
         _provinces
           ..clear()
@@ -100,6 +63,48 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     } catch (e) {
       debugPrint('❌ Error loading provinces: $e');
     }
+  }
+
+  // ✅✅✅ เพิ่มฟังก์ชันนี้ทั้งก้อน
+  Future<void> _saveToFirestore() async {
+    // 1. เช็กว่ามีคนล็อกอินไหม
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      // ยังไม่ล็อกอิน
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No logged in user. Please sign in first.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final uid = user.uid;
+    final email = user.email;
+
+    // 2. รวมข้อมูลฟอร์ม
+    final data = {
+      'uid': uid,
+      'email': email ?? '',
+      'firstname': _firstNameController.text.trim(),
+      'lastname': _lastNameController.text.trim(),
+      'address': _addressController.text.trim(),
+      'province': _selectedProvince,
+      'district': _selectedDistrict,
+      'subdistrict': _selectedSubdistrict,
+      'postal_code': _postalCodeController.text.trim(),
+      'phone': _phoneController.text.trim(),
+      'role': 'user',
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    // 3. เขียนลง Firestore
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid) // ให้ document id = uid
+        .set(data, SetOptions(merge: true)); // merge เผื่อมี field เดิมอยู่แล้ว
   }
 
   @override
@@ -194,7 +199,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                     gradient: const LinearGradient(
                                       colors: [
                                         Color(0xFF1976D2),
-                                        Color(0xFF42A5F5)
+                                        Color(0xFF42A5F5),
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
@@ -218,7 +223,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                             ),
                             const SizedBox(height: 20),
 
-                            // First Name
                             _buildLabel('First Name', required: true),
                             const SizedBox(height: 8),
                             _buildTextField(
@@ -232,9 +236,9 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                 return null;
                               },
                             ),
+
                             const SizedBox(height: 16),
 
-                            // Last Name
                             _buildLabel('Last Name', required: true),
                             const SizedBox(height: 8),
                             _buildTextField(
@@ -254,7 +258,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
 
                       const SizedBox(height: 20),
 
-                      // Address Section
+                      // Address Section (รวมช่อง)
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -271,7 +275,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Header
                             Row(
                               children: [
                                 Container(
@@ -280,7 +283,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                     gradient: const LinearGradient(
                                       colors: [
                                         Color(0xFF1976D2),
-                                        Color(0xFF42A5F5)
+                                        Color(0xFF42A5F5),
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
@@ -293,7 +296,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  'Container',
+                                  'Address',
                                   style: GoogleFonts.inter(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -304,37 +307,22 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                             ),
                             const SizedBox(height: 20),
 
-                            // House Number
-                            _buildLabel('House Number', required: true),
+                            // ✅ ช่องเดียว
+                            _buildLabel('Address', required: true),
                             const SizedBox(height: 8),
                             _buildTextField(
-                              controller: _houseNumberController,
-                              hintText: 'Enter house number',
-                              prefixIcon: Icons.house_outlined,
+                              controller: _addressController,
+                              hintText:
+                                  'เช่น 123 หมู่บ้านพฤกษา 45 ซอย 6 ถนนบางกรวยไทรน้อย',
+                              prefixIcon: Icons.home_outlined,
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
-                                  return 'Please enter house number';
+                                  return 'Please enter address';
                                 }
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 16),
 
-                            // Village / Soi / Street
-                            _buildLabel('Village / Soi / Street',
-                                required: true),
-                            const SizedBox(height: 8),
-                            _buildTextField(
-                              controller: _villageController,
-                              hintText: 'Enter village, soi or street',
-                              prefixIcon: Icons.signpost_outlined,
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Please enter village/soi/street';
-                                }
-                                return null;
-                              },
-                            ),
                             const SizedBox(height: 16),
 
                             // Province
@@ -356,13 +344,13 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                 });
                                 if (value != null) {
                                   final districts = await getDistricts(value);
-                                  if (!mounted) return;
                                   setState(() {
                                     _districts.addAll(districts);
                                   });
                                 }
                               },
                             ),
+
                             const SizedBox(height: 16),
 
                             // District
@@ -384,13 +372,13 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                     value != null) {
                                   final subdistricts = await getSubDistricts(
                                       _selectedProvince!, value);
-                                  if (!mounted) return;
                                   setState(() {
                                     _subdistricts.addAll(subdistricts);
                                   });
                                 }
                               },
                             ),
+
                             const SizedBox(height: 16),
 
                             // Subdistrict
@@ -413,7 +401,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                       _selectedDistrict!,
                                       value);
                                   if (zipcode != null) {
-                                    if (!mounted) return;
                                     setState(() {
                                       _postalCodeController.text = zipcode;
                                     });
@@ -421,6 +408,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                 }
                               },
                             ),
+
                             const SizedBox(height: 16),
 
                             // Postal Code (read-only)
@@ -431,7 +419,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                               hintText: 'Enter postal code',
                               prefixIcon: Icons.markunread_mailbox_outlined,
                               keyboardType: TextInputType.number,
-                              readOnly: true, // 🔒 ล็อกไม่ให้แก้เอง
+                              readOnly: true,
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
                                   return 'Please enter postal code';
@@ -448,7 +436,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
 
                       const SizedBox(height: 20),
 
-                      // Contact Information
+                      // Contact Information Section
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -465,7 +453,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Header
                             Row(
                               children: [
                                 Container(
@@ -474,7 +461,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                     gradient: const LinearGradient(
                                       colors: [
                                         Color(0xFF1976D2),
-                                        Color(0xFF42A5F5)
+                                        Color(0xFF42A5F5),
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
@@ -497,7 +484,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                               ],
                             ),
                             const SizedBox(height: 20),
-
                             _buildLabel('Phone Number', required: true),
                             const SizedBox(height: 8),
                             _buildTextField(
@@ -543,7 +529,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Header
                             Row(
                               children: [
                                 Container(
@@ -552,7 +537,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                     gradient: const LinearGradient(
                                       colors: [
                                         Color(0xFF1976D2),
-                                        Color(0xFF42A5F5)
+                                        Color(0xFF42A5F5),
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(12),
@@ -575,7 +560,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                               ],
                             ),
                             const SizedBox(height: 16),
-
                             InkWell(
                               onTap: () {
                                 setState(() {
@@ -645,11 +629,12 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
 
                       const SizedBox(height: 32),
 
-                      // ✅ Next Button (ตัวจริง ใช้งานได้)
+                      // Next Button
                       SizedBox(
                         width: double.infinity,
                         height: 54,
                         child: ElevatedButton(
+                          // ✅✅ ตรงนี้เราเปลี่ยนเป็น async แล้วเรียก _saveToFirestore()
                           onPressed: () async {
                             if (_formKey.currentState!.validate()) {
                               if (_selectedProvince == null ||
@@ -659,8 +644,10 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                   SnackBar(
                                     content: Row(
                                       children: [
-                                        const Icon(Icons.warning,
-                                            color: Colors.white),
+                                        const Icon(
+                                          Icons.warning,
+                                          color: Colors.white,
+                                        ),
                                         const SizedBox(width: 12),
                                         Text(
                                           'Please select all required fields',
@@ -684,8 +671,10 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                   SnackBar(
                                     content: Row(
                                       children: [
-                                        const Icon(Icons.warning,
-                                            color: Colors.white),
+                                        const Icon(
+                                          Icons.warning,
+                                          color: Colors.white,
+                                        ),
                                         const SizedBox(width: 12),
                                         Text(
                                           'Please agree to the terms and conditions',
@@ -704,43 +693,63 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
                                 return;
                               }
 
-                              // ✅ 1. บันทึกข้อมูลลง Firestore
-                              await _saveUserToFirestore();
+                              try {
+                                await _saveToFirestore(); // ✅ บันทึกลง Firestore
 
-                              // ✅ 2. แจ้งเตือนสำเร็จ
-                              if (!mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      const Icon(Icons.check_circle,
-                                          color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      Text(
-                                        'Information saved successfully!',
-                                        style: GoogleFonts.inter(),
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                          'Information saved successfully!',
+                                          style: GoogleFonts.inter(),
+                                        ),
+                                      ],
+                                    ),
+                                    backgroundColor: Colors.green,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    margin: const EdgeInsets.all(16),
+                                  ),
+                                );
+
+                                // 👉 จะไปหน้าอื่นก็ใส่ตรงนี้
+                                // Navigator.push(...);
+
+// ✅ ไปหน้า AddBuoy พร้อมส่งที่อยู่ที่กรอก
+                                if (mounted) {
+                                  // สร้างที่อยู่แบบเต็ม
+                                  final fullAddress =
+                                      '${_addressController.text}, '
+                                      '$_selectedSubdistrict, '
+                                      '$_selectedDistrict, '
+                                      '$_selectedProvince '
+                                      '${_postalCodeController.text}';
+
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => AddBuoyScreen(
+                                        userAddress: fullAddress,
                                       ),
-                                    ],
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Save failed: $e'),
+                                    backgroundColor: Colors.red,
                                   ),
-                                  backgroundColor: Colors.green,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  margin: const EdgeInsets.all(16),
-                                  duration: const Duration(seconds: 2),
-                                ),
-                              );
-
-                              // ✅ 3. ไปหน้า AddBuoyScreen หลังจากบันทึกเสร็จ
-                              await Future.delayed(
-                                  const Duration(milliseconds: 500));
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const AddBuoyScreen(),
-                                ),
-                              );
+                                );
+                              }
                             }
                           },
                           style: ElevatedButton.styleFrom(
@@ -776,6 +785,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     );
   }
 
+  // ---------------------- helper widgets ----------------------
   Widget _buildLabel(String text, {bool required = false}) {
     return Row(
       children: [
@@ -941,7 +951,7 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     );
   }
 
-  // ✅ โหลดจังหวัดทั้งหมด
+  // ================== JSON helpers ==================
   Future<List<String>> getProvinces() async {
     final jsonString =
         await rootBundle.loadString('assets/thai_data/provinces.json');
@@ -949,7 +959,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     return List<String>.from(data.map((e) => e['name_th']));
   }
 
-  // ✅ โหลดอำเภอตามจังหวัด
   Future<List<String>> getDistricts(String province) async {
     final provinceJson =
         await rootBundle.loadString('assets/thai_data/provinces.json');
@@ -971,7 +980,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     );
   }
 
-  // ✅ โหลดตำบลตามอำเภอ
   Future<List<String>> getSubDistricts(String province, String district) async {
     final districtJson =
         await rootBundle.loadString('assets/thai_data/districts.json');
@@ -993,7 +1001,6 @@ class _AddressInformationScreenState extends State<AddressInformationScreen> {
     );
   }
 
-  // ✅ ดึงรหัสไปรษณีย์
   Future<String?> getPostalCode(
       String province, String district, String subDistrict) async {
     final subJson =

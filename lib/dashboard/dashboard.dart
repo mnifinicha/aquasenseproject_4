@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import '../navigation/custom_bottom_nav.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -49,6 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double totalScore = 0.0;
   bool isLoading = true;
   bool hasData = false;
+  String _userName = 'User'; // ✅ เพิ่มตรงนี้
 
   DateTime? lastUpdated;
   double _rotationAngle = 0;
@@ -76,7 +79,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _loadUserName();
     _loadBuoyList();
+  }
+
+  // ✅ เพิ่มฟังก์ชันนี้ก่อน _loadBuoyList()
+  Future<void> _loadUserName() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (doc.exists) {
+        final data = doc.data()!;
+        final firstName = data['firstname'] ?? ''; // ✅ ดึงชื่อจริง
+
+        setState(() {
+          _userName = firstName.isNotEmpty ? firstName : 'User';
+        });
+
+        print('✅ Loaded firstname: $_userName');
+      } else {
+        print('⚠️ ไม่พบข้อมูลใน users/${user.uid}');
+      }
+    } catch (e) {
+      print('❌ Error loading user name: $e');
+    }
   }
 
   Future<void> _loadBuoyList() async {
@@ -447,6 +479,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
+  void _showLineQRDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: Colors.white,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Add us on LINE',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/line_qr.png', // ← ชื่อไฟล์ QR ของเธอ
+                  width: 230,
+                  height: 230,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'สแกน QR Code เพื่อเพิ่มเพื่อน',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('ปิด'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -523,18 +606,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text('Welcome back,',
                   style:
                       GoogleFonts.inter(fontSize: 14, color: Colors.white70)),
-              Text('Nichamon',
-                  style: GoogleFonts.inter(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
+              Text(
+                _userName, // ✅ ดึงชื่อจริงจาก Firestore
+                style: GoogleFonts.inter(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ],
           ),
           Row(
             children: [
               IconButton(
-                  icon: FaIcon(FontAwesomeIcons.line, color: Colors.white),
-                  onPressed: () {}),
+                icon: FaIcon(FontAwesomeIcons.line, color: Colors.white),
+                //onPressed: () {}),
+                onPressed: _showLineQRDialog, // 👈 เปลี่ยนตรงนี้
+              ),
               IconButton(
                   icon: Icon(Icons.settings, color: Colors.white),
                   onPressed: () {}),

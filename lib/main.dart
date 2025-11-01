@@ -18,6 +18,8 @@ import 'addbuoy/addbuoy.dart';
 //import 'newpassword/newpassword.dart';
 //import 'buoymana/BuoyManagement.dart';
 import 'pageonelogin/login_screen.dart';
+import 'add_buoy_list_screen.dart';
+import 'ml/ml.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,6 +52,8 @@ class AquaSenseApp extends StatelessWidget {
         '/history': (context) => const SensorGraphsPage(),
         //'/address-info': (_) => const AddressInformationScreen(),
         '/add-buoy': (_) => const AddBuoyScreen(),
+        '/add': (context) => const AddBuoyListScreen(),
+        '/forecast': (context) => const WaterForecastPage(),
       },
       // initialRoute: '/',
       // ชั่วคราวให้เข้าหน้า Login เพื่อทดสอบการเชื่อม (เปลี่ยนกลับเป็น Address ได้)
