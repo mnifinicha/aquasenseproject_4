@@ -55,6 +55,7 @@ class AquaSenseApp extends StatelessWidget {
         '/add': (context) => const AddBuoyListScreen(),
         '/forecast': (context) => const WaterForecastPage(),
       },
+
       // initialRoute: '/',
       // ชั่วคราวให้เข้าหน้า Login เพื่อทดสอบการเชื่อม (เปลี่ยนกลับเป็น Address ได้)
       //home: const DashboardScreen(),

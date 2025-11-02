@@ -99,10 +99,19 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
   bool isLoading = true;
   String? errorMessage;
 
+  // ScrollController สำหรับเลื่อนไปที่ Selected Date
+  final ScrollController _scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
-    _loadForecasts(); // โหลด 3 วันแรกเลย
+    _loadForecasts();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   // ======================
@@ -152,7 +161,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
       final List<WaterForecast> loaded = [];
 
       for (final targetDate in targetDates) {
-        // เก็บทุก candidate ที่ตรงวัน
         final List<Map<String, dynamic>> candidates = [];
 
         for (final doc in snap.docs) {
@@ -163,7 +171,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           bool matched = false;
           Map<String, dynamic>? matchedDaily;
 
-          // แบบ array
           if (daily is List) {
             for (final day in daily) {
               if (day is Map<String, dynamic> && day['date'] == targetDate) {
@@ -174,7 +181,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
             }
           }
 
-          // แบบ single
           if (!matched && data['forecast_date'] == targetDate) {
             matched = true;
             matchedDaily = data;
@@ -192,12 +198,10 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           continue;
         }
 
-        // เอาอันที่ created_at ล่าสุด
         candidates.sort((a, b) => (b['created_at'] as DateTime)
             .compareTo(a['created_at'] as DateTime));
         final pickedDaily = candidates.first['daily'] as Map<String, dynamic>;
 
-        // ----- forecast -----
         final wqiObj = pickedDaily['wqi'] as Map<String, dynamic>?;
         double forecastWQI = 0.0;
         String forecastStatus = 'Unknown';
@@ -210,7 +214,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
         }
         final forecastParams = pickedDaily['params'] as Map<String, dynamic>?;
 
-        // ----- actual -----
         final targetDt = DateFormat('yyyy-MM-dd').parse(targetDate);
         final today = DateTime(now.year, now.month, now.day);
         final reached =
@@ -243,7 +246,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
               actualParams = actualObj['params'] as Map<String, dynamic>?;
             }
 
-            // ใช้ metrics.wqi ก่อน ถ้าไม่มีค่อยใช้ overall
             final metrics = evalData['metrics'] as Map<String, dynamic>?;
             final wqiMetrics = metrics?['wqi'] as Map<String, dynamic>?;
             final overallMetrics = metrics?['overall'] as Map<String, dynamic>?;
@@ -326,10 +328,10 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           _selectedDate = date;
           _selectedForecast = null;
         });
+        _scrollToSelectedDate();
         return;
       }
 
-      // forecast
       final wqiObj = pickedDaily['wqi'] as Map<String, dynamic>?;
       double forecastWQI = 0.0;
       String forecastStatus = 'Unknown';
@@ -342,7 +344,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
       }
       final forecastParams = pickedDaily['params'] as Map<String, dynamic>?;
 
-      // actual
       double? actualWQI;
       String? actualStatus;
       double? accuracy;
@@ -400,6 +401,8 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           actualParams: actualParams,
         );
       });
+
+      _scrollToSelectedDate();
     } catch (e, st) {
       print(e);
       print(st);
@@ -407,43 +410,36 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
         _selectedDate = date;
         _selectedForecast = null;
       });
+      _scrollToSelectedDate();
     }
   }
 
-  // ============================
-  // DEBUG
-  // ============================
-  Future<void> _debugFetchTodayAll() async {
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final snap = await _firestore
-        .collection('weekly_forecasts')
-        .where('buoy_id', isEqualTo: widget.buoyId)
-        .get();
-
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      final daily = data['daily'];
-      if (daily is List) {
-        for (final d in daily) {
-          if (d is Map<String, dynamic> && d['date'] == today) {
-            print('doc: ${doc.id}');
-            print('created_at: ${data['created_at']}');
-            print('wqi: ${d['wqi']}');
-            print('params: ${d['params']?.keys.toList()}');
-          }
-        }
+  // ฟังก์ชันเลื่อนไปที่ Selected Date
+  void _scrollToSelectedDate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+        );
       }
-    }
+    });
   }
 
   // ============================
   // UI Helpers
   // ============================
   Color _getWQIColor(double wqi) {
-    if (wqi >= 80) return Colors.green;
-    if (wqi >= 60) return Colors.orange;
-    if (wqi >= 40) return Colors.deepOrange;
-    return Colors.red;
+    if (wqi >= 71.0 && wqi <= 100.0) {
+      return Colors.green; // ดีมาก
+    } else if (wqi >= 50.0 && wqi < 71.0) {
+      return Colors.yellow; // ปานกลาง
+    } else if (wqi >= 0.0 && wqi < 50.0) {
+      return Colors.deepOrange; // แย่
+    } else {
+      return Colors.red; // ค่าผิดปกติ
+    }
   }
 
   String _formatDate(DateTime date) {
@@ -466,13 +462,9 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
 
   String _formatStatus(String status) {
     const statusMap = {
-      'good': 'Good',
-      'excellent': 'Excellent',
-      'moderate': 'Moderate',
-      'poor': 'Poor',
-      'ดีมาก': 'Excellent',
-      'ดี': 'Good',
-      'ปานกลาง': 'Moderate',
+      'Excellent': 'Excellent',
+      'Warning': 'Warning',
+      'Critical': 'Critical',
     };
     return statusMap[status.toLowerCase()] ?? status;
   }
@@ -488,12 +480,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           'Water Quality Forecast',
           style: TextStyle(color: Colors.black),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report, color: Colors.black),
-            onPressed: _debugFetchTodayAll,
-          ),
-        ],
       ),
       bottomNavigationBar: const CustomBottomNav(currentIndex: 3),
       body: SafeArea(
@@ -504,11 +490,48 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                 : RefreshIndicator(
                     onRefresh: _loadForecasts,
                     child: SingleChildScrollView(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // ===== ปุ่มเลือกวันย้อนหลัง =====
+                          if (_selectedDate != null) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                              child: Text(
+                                'Selected date',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  color: Colors.grey[800],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            if (_selectedForecast == null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    'No forecast for this date',
+                                    style: TextStyle(color: Colors.red[400]),
+                                  ),
+                                ),
+                              )
+                            else
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: _buildForecastCard(_selectedForecast!),
+                              ),
+                            const SizedBox(height: 24),
+                          ],
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                             child: Row(
@@ -544,10 +567,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                               ],
                             ),
                           ),
-
                           const SizedBox(height: 12),
-
-                          // ===== 3 วันล่าสุด =====
                           Padding(
                             padding:
                                 const EdgeInsets.symmetric(horizontal: 16.0),
@@ -555,11 +575,11 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                               'Latest forecasts (3 days)',
                               style: TextStyle(
                                   fontWeight: FontWeight.w600,
+                                  fontSize: 15,
                                   color: Colors.grey[800]),
                             ),
                           ),
                           const SizedBox(height: 8),
-
                           if (forecasts.isEmpty)
                             const Padding(
                               padding: EdgeInsets.all(16.0),
@@ -576,45 +596,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                                 return _buildForecastCard(forecasts[index]);
                               },
                             ),
-
-                          // ===== ถ้าเลือกย้อนหลังได้ =====
-                          if (_selectedDate != null) ...[
-                            const SizedBox(height: 16),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16.0),
-                              child: Text(
-                                'Selected date',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.grey[800]),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            if (_selectedForecast == null)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0),
-                                child: Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Text(
-                                    'No forecast for this date',
-                                    style: TextStyle(color: Colors.red[400]),
-                                  ),
-                                ),
-                              )
-                            else
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0),
-                                child: _buildForecastCard(_selectedForecast!),
-                              ),
-                          ],
-
                           const SizedBox(height: 80),
                         ],
                       ),
@@ -747,10 +728,11 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            Icon(Icons.water_drop,
-                                size: 20,
-                                color:
-                                    hasActual ? actualColor : Colors.grey[400]),
+                            Icon(
+                              Icons.water_drop,
+                              size: 20,
+                              color: hasActual ? actualColor : Colors.grey[400],
+                            ),
                           ],
                         ),
                       ],
@@ -767,7 +749,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                 decoration: BoxDecoration(
                   color: f.accuracy! >= 90
                       ? Colors.green.withOpacity(0.1)
-                      : Colors.orange.withOpacity(0.1),
+                      : Colors.yellow.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -778,7 +760,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                       size: 16,
                       color: f.accuracy! >= 90
                           ? Colors.green[700]
-                          : Colors.orange[700],
+                          : Colors.yellow[700],
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -824,7 +806,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
       return;
     }
 
-    // forecast cards
     final List<Widget> forecastCards = [];
     if (forecastParams != null) {
       forecastParams.forEach((name, val) {
@@ -834,7 +815,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
       });
     }
 
-    // actual cards (แบบรูป 4)
     final List<Widget> actualCards = [];
     if (actualParams != null) {
       actualParams.forEach((name, val) {
@@ -857,7 +837,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
           constraints: const BoxConstraints(maxWidth: 500, maxHeight: 600),
           child: Column(
             children: [
-              // header
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -888,7 +867,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                   ],
                 ),
               ),
-              // body
               Expanded(
                 child: Container(
                   color: Colors.grey[50],
@@ -929,9 +907,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
     );
   }
 
-  // -----------------------------
-  // การ์ด forecast (อันเดิม)
-  // -----------------------------
   Widget _buildParameterCard(String paramName, Map<String, dynamic> paramData) {
     final mean = _asDouble(paramData['mean']);
 
@@ -949,7 +924,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
 
     String range = 'N/A';
     if (piLow != null && piHigh != null && (piLow != 0 || piHigh != 0)) {
-      // ปัด 2 ตำแหน่งทุกตัวเลย
       final lowRound = ((piLow) * 100).roundToDouble() / 100;
       final highRound = ((piHigh) * 100).roundToDouble() / 100;
       range = '${lowRound.toStringAsFixed(2)}-${highRound.toStringAsFixed(2)}';
@@ -1010,9 +984,6 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
     );
   }
 
-  // -----------------------------
-  // การ์ด actual (แบบรูปที่ 4)
-  // -----------------------------
   Widget _buildActualParameterCard(String paramName, double value) {
     final status = _determineStatus(paramName, value);
     final color = _getStatusColor(status);
@@ -1074,13 +1045,10 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
     );
   }
 
-  // -----------------------------
-  // helpers สำหรับชื่อ/หน่วย/เกณฑ์
-  // -----------------------------
   String _getUnit(String paramName) {
     switch (paramName.toLowerCase()) {
       case 'ph':
-        return 'pH';
+        return '';
       case 'tds':
         return 'ppm';
       case 'ec':
@@ -1091,7 +1059,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
         return '°C';
       case 'rainfall':
       case 'rain':
-        return 'mm';
+        return 'ADC';
       default:
         return '';
     }
@@ -1118,20 +1086,86 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
 
   String _determineStatus(String paramName, double value) {
     switch (paramName.toLowerCase()) {
+      // ================= pH =================
       case 'ph':
-        if (value >= 6.5 && value <= 8.5) return 'Excellent';
-        if (value >= 6.0 && value <= 9.0) return 'Moderate';
-        return 'Poor';
+        // ดีมาก: 6.5 – 8.5999
+        if (value >= 6.5 && value <= 8.5999) {
+          return 'Excellent';
+        }
+        // เตือน: 6.0 – 6.4999 หรือ 8.6 – 9.09
+        if ((value >= 6.0 && value < 6.5) || (value >= 8.6 && value <= 9.09)) {
+          return 'Warning';
+        }
+        // แย่: 0.0 – 5.9999 หรือ 9.1 – 14.0
+        if ((value >= 0.0 && value < 6.0) || (value >= 9.1 && value <= 14.0)) {
+          return 'Critical';
+        }
+        return 'Critical';
+
+      // ================= TDS =================
       case 'tds':
-        if (value <= 600) return 'Excellent';
-        if (value <= 1000) return 'Moderate';
-        return 'Poor';
+        if (value >= 0 && value <= 599) {
+          return 'Excellent';
+        } else if (value >= 600 && value <= 900) {
+          return 'Warning';
+        } else if (value >= 901 && value <= 1500) {
+          return 'Critical';
+        } else {
+          return 'Critical';
+        }
+
+      // ================= EC =================
+      case 'ec':
+        if (value >= 0 && value <= 894) {
+          return 'Excellent';
+        } else if (value >= 895 && value <= 1343) {
+          return 'Warning';
+        } else if (value >= 1344 && value <= 2240) {
+          return 'Critical';
+        } else {
+          return 'Critical';
+        }
+
+      // ================= Turbidity =================
       case 'turbidity':
-        if (value <= 50) return 'Excellent';
-        if (value <= 100) return 'Moderate';
-        return 'Poor';
+        if (value >= 0 && value <= 25) {
+          return 'Excellent';
+        } else if (value >= 26 && value <= 100) {
+          return 'Warning';
+        } else if (value >= 101 && value <= 1000) {
+          return 'Critical';
+        } else {
+          return 'Critical';
+        }
+
+      // ================= Temperature =================
+      case 'temperature':
+        if (value >= 26 && value <= 30) {
+          return 'Excellent';
+        } else if ((value >= 23 && value <= 25) ||
+            (value >= 31 && value <= 33)) {
+          return 'Warning';
+        } else if ((value >= -20 && value <= 22) ||
+            (value >= 34 && value <= 105)) {
+          return 'Critical';
+        } else {
+          return 'Critical';
+        }
+
+      // ================= Rainfall =================
+      case 'rainfall':
+        if (value >= 683 && value <= 1023) {
+          return 'Excellent';
+        } else if (value >= 342 && value <= 682) {
+          return 'Warning';
+        } else if (value >= 0 && value <= 341) {
+          return 'Critical';
+        } else {
+          return 'Critical';
+        }
+
       default:
-        return 'Normal';
+        return 'Excellent';
     }
   }
 
@@ -1139,10 +1173,9 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
     switch (status.toLowerCase()) {
       case 'excellent':
         return Colors.green;
-      case 'moderate':
-      case 'normal':
-        return Colors.orange;
-      case 'poor':
+      case 'warning':
+        return Colors.yellow;
+      case 'critical':
         return Colors.red;
       default:
         return Colors.grey;

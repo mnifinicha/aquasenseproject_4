@@ -16,6 +16,31 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  String _userName = "-";
+
+  // ✅ 2️⃣ วางฟังก์ชันนี้ “ต่อจากตัวแปร”
+  Future<void> _fetchUserName() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (doc.exists) {
+        final data = doc.data()!;
+        final firstName = data['firstname']?.toString() ?? '-';
+        setState(() {
+          _userName = firstName.isEmpty ? '-' : firstName;
+        });
+      }
+    } catch (e) {
+      print("⚠️ Error loading user name: $e");
+    }
+  }
+
   int _selectedIndex = 0;
 
   void _onNavTapped(int index) {
@@ -51,7 +76,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double totalScore = 0.0;
   bool isLoading = true;
   bool hasData = false;
-  String _userName = 'User'; // ✅ เพิ่มตรงนี้
+  //String _userName = 'User'; // ✅ เพิ่มตรงนี้
 
   DateTime? lastUpdated;
   double _rotationAngle = 0;
@@ -79,6 +104,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _fetchUserName();
     _loadUserName();
     _loadBuoyList();
   }
@@ -111,7 +137,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _loadBuoyList() async {
+  /*Future<void> _loadBuoyList() async {
     try {
       final snapshot = await _database.child('buoys').get();
 
@@ -130,6 +156,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
       } else {
         setState(() => isLoading = false);
       }
+    } catch (e) {
+      print('❌ Error loading buoy list: $e');
+      setState(() => isLoading = false);
+    }
+  }*/
+  Future<void> _loadBuoyList() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        setState(() => isLoading = false);
+        return;
+      }
+
+      // ✅ ดึงเฉพาะทุ่นของ user คนนี้จาก buoy_registry
+      final registrySnap = await FirebaseFirestore.instance
+          .collection('buoy_registry')
+          .where('uid', isEqualTo: user.uid)
+          .where('active', isEqualTo: true)
+          .get();
+
+      if (registrySnap.docs.isEmpty) {
+        setState(() {
+          buoyIds = [];
+          selectedBuoyId = null;
+          hasData = false;
+          isLoading = false;
+        });
+        return;
+      }
+
+      // ✅ เก็บ buoy_id ของ user
+      final userBuoyIds = registrySnap.docs
+          .map((doc) => doc.data()['buoy_id'] as String?)
+          .where((id) => id != null)
+          .cast<String>()
+          .toList();
+
+      setState(() {
+        buoyIds = userBuoyIds;
+        if (buoyIds.isNotEmpty) {
+          selectedBuoyId = buoyIds.first;
+          _loadBuoyData();
+        } else {
+          selectedBuoyId = null;
+          hasData = false;
+        }
+        isLoading = false;
+      });
     } catch (e) {
       print('❌ Error loading buoy list: $e');
       setState(() => isLoading = false);

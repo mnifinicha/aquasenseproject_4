@@ -1,13 +1,9 @@
 import 'package:flutter/material.dart';
-//import 'package:flutter_svg/flutter_svg.dart';
-
-// ✅ Firebase Auth / Google Sign-In
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-// ไปหน้า Address หลังล็อกอินสำเร็จ
-//import '../address/address.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -19,8 +15,10 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+
   bool _obscurePassword = true;
   bool _loading = false;
+  bool _googleBusy = false;
 
   @override
   void dispose() {
@@ -29,112 +27,207 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _toast(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  /*void _goNext() {
-    Navigator.pushReplacementNamed(
-      context,
-      '/email-password',
-      arguments: {
-        'email': _emailController.text.trim(),
-        'password': _passwordController.text.trim(),
-      },
+  void _toast(String msg, {Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: color ?? Colors.black87,
+        duration: const Duration(seconds: 3),
+      ),
     );
-  }*/
+  }
+
   void _goNext() {
+    if (!mounted) return;
     Navigator.pushReplacementNamed(context, '/dashboard');
   }
 
   void _goToResetPassword() {
+    if (!mounted) return;
     Navigator.pushNamed(context, '/reset-password');
   }
 
-  // ---------- Auth actions ----------
+  Future<void> _ensureFirestoreProfile(User user) async {
+    try {
+      final docRef =
+          FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final doc = await docRef.get();
+      if (!doc.exists) {
+        await docRef.set({
+          'email': user.email ?? '',
+          'role': 'user',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        debugPrint('✅ Created Firestore profile for ${user.email}');
+      } else {
+        debugPrint('ℹ️ Firestore profile exists for ${user.email}');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Firestore error: $e');
+    }
+  }
+
+  // ================== EMAIL/PASS ==================
   Future<void> _loginWithEmail() async {
-    //final email = _emailController.text.trim();
-    var email = _emailController.text.trim();
-    final pass = _passwordController.text.trim();
+    if (_loading) return;
+
+    String email = _emailController.text.trim();
+    final String pass = _passwordController.text.trim();
+
     if (email.isEmpty || pass.isEmpty) {
-      _toast('Please fill email & password');
+      _toast('Please fill email & password', color: Colors.red);
       return;
     }
+
     if (email.contains(' ')) {
-      _toast('Email should not contain spaces');
+      _toast('Email should not contain spaces', color: Colors.red);
       return;
     }
 
     final invalidEmail =
-        !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email) ||
+        !RegExp(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email) ||
             RegExp(r'[ก-๙]').hasMatch(email) ||
             RegExp(r'[!#$%^&*(),?":{}|<>]').hasMatch(email);
 
     if (invalidEmail) {
-      _toast('Please enter a valid email address');
+      _toast('Please enter a valid email address', color: Colors.red);
       return;
     }
 
     if (email.contains(RegExp(r'[A-Z]'))) {
-      email = email.toLowerCase(); // แปลงเป็นตัวเล็ก
-      _toast('Email has been converted to lowercase automatically');
+      email = email.toLowerCase();
     }
+
     setState(() => _loading = true);
+
     try {
-      await FirebaseAuth.instance
+      final cred = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: pass);
+
+      final user = cred.user;
+      if (user == null) {
+        _toast('Login failed', color: Colors.red);
+        return;
+      }
+
+      await _ensureFirestoreProfile(user);
       _goNext();
     } on FirebaseAuthException catch (e) {
-      _toast(e.message ?? 'Login failed');
-    } catch (_) {
-      _toast('Login failed');
+      switch (e.code) {
+        case 'user-not-found':
+          _toast('This email has not been registered yet.', color: Colors.red);
+          break;
+        case 'wrong-password':
+          _toast('Wrong password.', color: Colors.red);
+          break;
+        case 'user-disabled':
+          _toast('This account has been disabled.', color: Colors.red);
+          break;
+        case 'too-many-requests':
+          _toast('Too many attempts. Try again later.', color: Colors.red);
+          break;
+        case 'network-request-failed':
+          _toast('No internet connection.', color: Colors.red);
+          break;
+        default:
+          _toast('Login failed: ${e.message}', color: Colors.red);
+      }
+    } catch (e) {
+      _toast('Unexpected error: $e', color: Colors.red);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _resetPassword() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty) {
-      _toast('Enter your email first');
-      return;
-    }
-    try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      _toast('Password reset link sent to your email');
-    } on FirebaseAuthException catch (e) {
-      _toast(e.message ?? 'Cannot send reset email');
-    }
-  }
-
+  // ================== GOOGLE (ไม่เช็คอะไรเลย - เข้าตรงๆ) ==================
   Future<void> _loginWithGoogle() async {
-    setState(() => _loading = true);
+    if (_loading || _googleBusy) return;
+
+    setState(() {
+      _loading = true;
+      _googleBusy = true;
+    });
+
     try {
+      UserCredential cred;
+
       if (kIsWeb) {
-        await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+        // บนเว็บ
+        cred =
+            await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
       } else {
+        // บนมือถือ
         final googleUser = await GoogleSignIn().signIn();
+
         if (googleUser == null) {
-          setState(() => _loading = false);
+          _toast('Google sign-in cancelled.');
           return;
         }
-        final googleAuth = await googleUser!.authentication;
+
+        final googleAuth = await googleUser.authentication;
+
+        if (googleAuth.accessToken == null && googleAuth.idToken == null) {
+          _toast('Failed to get authentication tokens', color: Colors.red);
+          return;
+        }
+
         final credential = GoogleAuthProvider.credential(
           accessToken: googleAuth.accessToken,
           idToken: googleAuth.idToken,
         );
-        await FirebaseAuth.instance.signInWithCredential(credential);
+
+        cred = await FirebaseAuth.instance.signInWithCredential(credential);
       }
+
+      final user = cred.user;
+
+      if (user == null || user.email == null) {
+        _toast('Google sign-in failed', color: Colors.red);
+        await _signOutGoogle();
+        return;
+      }
+
+      // ✅✅✅ เข้าเลย ไม่เช็คอะไร
+      _toast('Welcome ${user.email}!', color: Colors.green);
+      await _ensureFirestoreProfile(user);
       _goNext();
     } on FirebaseAuthException catch (e) {
-      _toast(e.message ?? 'Google sign-in failed');
-    } catch (_) {
-      _toast('Google sign-in failed');
+      if (e.code == 'popup-closed-by-user') {
+        _toast('Sign-in popup was closed');
+      } else if (e.code == 'network-request-failed') {
+        _toast('No internet connection', color: Colors.red);
+      } else {
+        _toast('Google sign-in failed: ${e.message}', color: Colors.red);
+      }
+      await _signOutGoogle();
+    } catch (e) {
+      _toast('Unexpected error: $e', color: Colors.red);
+      await _signOutGoogle();
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _googleBusy = false;
+        });
+      }
     }
   }
 
-  // ---------- UI (ของเดิม) ----------
+  Future<void> _signOutGoogle() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+
+    if (!kIsWeb) {
+      try {
+        await GoogleSignIn().signOut();
+      } catch (_) {}
+    }
+  }
+
+  // ================== UI ==================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -200,12 +293,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 24),
 
+                            // Email
                             TextField(
                               controller: _emailController,
+                              enabled: !_loading,
                               decoration: InputDecoration(
                                 hintText: 'Email',
-                                hintStyle:
-                                    const TextStyle(color: Colors.black38),
                                 filled: true,
                                 fillColor: const Color(0xFFF5F5F5),
                                 border: OutlineInputBorder(
@@ -221,13 +314,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 12),
 
+                            // Password
                             TextField(
                               controller: _passwordController,
+                              enabled: !_loading,
                               obscureText: _obscurePassword,
                               decoration: InputDecoration(
                                 hintText: 'Password',
-                                hintStyle:
-                                    const TextStyle(color: Colors.black38),
                                 filled: true,
                                 fillColor: const Color(0xFFF5F5F5),
                                 border: OutlineInputBorder(
@@ -239,20 +332,23 @@ class _LoginScreenState extends State<LoginScreen> {
                                   vertical: 16,
                                 ),
                                 suffixIcon: IconButton(
+                                  onPressed: _loading
+                                      ? null
+                                      : () {
+                                          setState(() => _obscurePassword =
+                                              !_obscurePassword);
+                                        },
                                   icon: Icon(
                                     _obscurePassword
                                         ? Icons.visibility_off_outlined
                                         : Icons.visibility_outlined,
                                     color: Colors.black38,
                                   ),
-                                  onPressed: () => setState(() =>
-                                      _obscurePassword = !_obscurePassword),
                                 ),
                               ),
                             ),
                             const SizedBox(height: 20),
 
-                            // ✅ เชื่อม Firebase: email/password
                             ElevatedButton(
                               onPressed: _loading ? null : _loginWithEmail,
                               style: ElevatedButton.styleFrom(
@@ -262,10 +358,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
+                                disabledBackgroundColor:
+                                    const Color(0xFF1B4F91).withOpacity(0.6),
                               ),
-                              child: const Text(
-                                'Log In',
-                                style: TextStyle(
+                              child: Text(
+                                _loading && !_googleBusy
+                                    ? 'Please wait...'
+                                    : 'Log In',
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,
                                   color: Colors.white,
@@ -275,17 +375,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 6),
 
                             Align(
-                              alignment:
-                                  Alignment.centerRight, // ✅ ชิดขวาแน่นอน
-                              child:
-                                  // ✅ เชื่อม Firebase: reset password
-                                  TextButton(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
                                 onPressed: _loading ? null : _goToResetPassword,
                                 child: const Text(
                                   'Forgot Password?',
                                   style: TextStyle(
                                     color: Colors.black54,
-                                    fontSize: 14,
                                   ),
                                 ),
                               ),
@@ -302,43 +398,25 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 12),
 
-                            // ✅ เชื่อม Firebase: Google sign-in
-                            /* OutlinedButton.icon(
-                              onPressed: _loading ? null : _loginWithGoogle,
-                              icon: SvgPicture.asset(
-                                'assets/icons/google.svg',
-                                width: 22,
-                                height: 22,
-                              ),
-                              label: const Text(
-                                'Continue with Google',
-                                style: TextStyle(
-                                  color: Colors.black87,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                side: const BorderSide(color: Colors.black12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),*/
-
                             OutlinedButton.icon(
-                              onPressed: _loading ? null : _loginWithGoogle,
-                              icon: const FaIcon(
+                              onPressed: (_loading || _googleBusy)
+                                  ? null
+                                  : _loginWithGoogle,
+                              icon: FaIcon(
                                 FontAwesomeIcons.google,
-                                color: Color.fromARGB(255, 10, 10, 10),
+                                color: (_loading || _googleBusy)
+                                    ? Colors.grey
+                                    : Colors.black,
                                 size: 17,
                               ),
-                              label: const Text(
-                                'Continue with Google',
+                              label: Text(
+                                (_loading && _googleBusy)
+                                    ? 'Connecting...'
+                                    : 'Continue with Google',
                                 style: TextStyle(
-                                  color: Colors.black87,
+                                  color: (_loading || _googleBusy)
+                                      ? Colors.grey
+                                      : Colors.black87,
                                   fontSize: 15,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -351,9 +429,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8),
                                 ),
+                                disabledBackgroundColor: Colors.grey[100],
                               ),
                             ),
-
                             const SizedBox(height: 16),
 
                             Row(
@@ -367,13 +445,18 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                                 GestureDetector(
-                                  onTap: () {
-                                    Navigator.pushNamed(context, '/signup');
-                                  },
-                                  child: const Text(
+                                  onTap: _loading
+                                      ? null
+                                      : () {
+                                          Navigator.pushNamed(
+                                              context, '/signup');
+                                        },
+                                  child: Text(
                                     'Sign Up here',
                                     style: TextStyle(
-                                      color: Color(0xFF1B4F91),
+                                      color: _loading
+                                          ? Colors.grey
+                                          : const Color(0xFF1B4F91),
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -393,7 +476,11 @@ class _LoginScreenState extends State<LoginScreen> {
           if (_loading)
             Container(
               color: Colors.black26,
-              child: const Center(child: CircularProgressIndicator()),
+              child: const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
             ),
         ],
       ),

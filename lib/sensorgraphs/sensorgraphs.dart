@@ -18,6 +18,13 @@ class SensorGraphsPage extends StatefulWidget {
 
 class _SensorGraphsPageState extends State<SensorGraphsPage> {
   String selectedPeriod = 'Day';
+
+  // ✅ เพิ่มตัวแปรเก็บทุ่นที่เลือก
+  late String selectedBuoyId;
+
+  // ✅ รายชื่อทุ่นทั้งหมด
+  List<String> availableBuoys = [];
+
   final Map<String, DateTime?> selectedDates = {
     'temperature': null,
     'ph': null,
@@ -27,7 +34,6 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
     'tds': null,
   };
 
-  // เก็บข้อมูลจาก Firestore
   Map<String, List<SensorData>> sensorHistory = {
     'temperature': [],
     'ph': [],
@@ -38,15 +44,47 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
   };
 
   bool isLoading = true;
+  bool isLoadingBuoys = true;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   void initState() {
     super.initState();
+    selectedBuoyId = widget.buoyId; // ✅ ใช้ค่าเริ่มต้น
+    _fetchAvailableBuoys(); // ✅ ดึงรายชื่อทุ่นทั้งหมด
     _fetchSensorData();
   }
 
-  // ดึงข้อมูลจาก Firestore (แบบแยก parameter)
+  // ✅ ดึงรายชื่อทุ่นทั้งหมด
+  Future<void> _fetchAvailableBuoys() async {
+    try {
+      final querySnapshot =
+          await _firestore.collection('sensor_timeseries').get();
+
+      // ดึง buoy_id ที่ไม่ซ้ำกัน
+      Set<String> buoySet = {};
+      for (var doc in querySnapshot.docs) {
+        final buoyId = doc.data()['buoy_id'] as String?;
+        if (buoyId != null) {
+          buoySet.add(buoyId);
+        }
+      }
+
+      setState(() {
+        availableBuoys = buoySet.toList()..sort();
+        isLoadingBuoys = false;
+      });
+
+      print('🎯 Available buoys: $availableBuoys');
+    } catch (e) {
+      print('❌ Error fetching buoys: $e');
+      setState(() {
+        isLoadingBuoys = false;
+      });
+    }
+  }
+
+  // ✅ ดึงข้อมูลตามทุ่นที่เลือก
   Future<void> _fetchSensorData() async {
     setState(() {
       isLoading = true;
@@ -55,29 +93,21 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
     try {
       DateTime startDate = _getStartDate(selectedPeriod);
 
-      print('🔍 Fetching data from: $startDate');
+      print('🔍 Fetching data for buoy: $selectedBuoyId from: $startDate');
 
-      // ดึงข้อมูลทั้งหมด
+      // ✅ ใช้ selectedBuoyId แทน widget.buoyId
       final querySnapshot = await _firestore
           .collection('sensor_timeseries')
-          .where('buoy_id', isEqualTo: widget.buoyId)
+          .where('buoy_id', isEqualTo: selectedBuoyId)
+          .where('timestamp_ms',
+              isGreaterThanOrEqualTo: startDate.millisecondsSinceEpoch)
           .orderBy('timestamp_ms', descending: false)
+          .limit(1000)
           .get();
-
-// ✅ กรองข้อมูลภายหลังด้วย Dart (แทนการ where)
-      final filteredDocs = querySnapshot.docs.where((doc) {
-        final ts = doc['timestamp_ms'];
-        if (ts is int) {
-          final time = DateTime.fromMillisecondsSinceEpoch(ts);
-          return time.isAfter(startDate); // กรองตามช่วงเวลา
-        }
-        return false;
-      }).toList();
 
       print('📊 Total records found: ${querySnapshot.docs.length}');
 
       if (querySnapshot.docs.isNotEmpty) {
-        // รีเซ็ตข้อมูล
         Map<String, List<SensorData>> tempData = {
           'temperature': [],
           'ph': [],
@@ -87,35 +117,21 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           'tds': [],
         };
 
-        for (var doc in filteredDocs) {
+        for (var doc in querySnapshot.docs) {
           final data = doc.data();
-          final parameter = data['parameter'] as String?;
+          final parameter = (data['parameter'] as String?)?.toLowerCase();
           final value = data['value'];
+          final timestampMs = data['timestamp_ms'] as int?;
 
-          // แปลง timestamp
-          DateTime? timestamp;
-          if (data['timestamp_ms'] != null) {
-            timestamp = DateTime.fromMillisecondsSinceEpoch(
-                data['timestamp_ms'] as int);
-          } else {
-            print('⚠️ No timestamp_ms in document: ${doc.id}');
-            continue;
-          }
+          if (parameter != null && value != null && timestampMs != null) {
+            if (tempData.containsKey(parameter)) {
+              final timestamp =
+                  DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
-          // เช็คว่ามี parameter และ value ไหม
-          if (parameter != null && value != null) {
-            final sensorKey = parameter.toLowerCase();
-
-            if (tempData.containsKey(sensorKey)) {
-              tempData[sensorKey]!.add(SensorData(
+              tempData[parameter]!.add(SensorData(
                 value: (value as num).toDouble(),
                 timestamp: timestamp,
               ));
-
-              print(
-                  '✅ Added $sensorKey: $value at ${DateFormat('HH:mm:ss').format(timestamp)}');
-            } else {
-              print('⚠️ Unknown parameter: $parameter');
             }
           }
         }
@@ -125,14 +141,22 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           isLoading = false;
         });
 
-        // แสดงสรุปจำนวนข้อมูล
         print('\n📈 Data Summary:');
         sensorHistory.forEach((key, value) {
           print('   $key: ${value.length} data points');
         });
       } else {
-        print('⚠️ No documents found');
+        print('⚠️ No documents found for $selectedBuoyId');
         setState(() {
+          // ✅ รีเซ็ตข้อมูลเมื่อไม่มีข้อมูล
+          sensorHistory = {
+            'temperature': [],
+            'ph': [],
+            'turbidity': [],
+            'ec': [],
+            'rainfall': [],
+            'tds': [],
+          };
           isLoading = false;
         });
       }
@@ -161,7 +185,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
         return now.subtract(const Duration(days: 7));
       case 'Month':
         return now.subtract(const Duration(days: 30));
-      default: // Day
+      default:
         return now.subtract(const Duration(hours: 24));
     }
   }
@@ -172,15 +196,19 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
       print(
-          '🔍 Fetching $sensorKey for date: ${DateFormat('dd/MM/yyyy').format(date)}');
+          '🔍 Fetching $sensorKey for buoy: $selectedBuoyId, date: ${DateFormat('dd/MM/yyyy').format(date)}');
 
+      // ✅ ใช้ selectedBuoyId
       final querySnapshot = await _firestore
           .collection('sensor_timeseries')
-          .where('buoy_id', isEqualTo: widget.buoyId)
-          .where('parameter', isEqualTo: sensorKey) // ✅ ใช้ sensorKey
+          .where('buoy_id', isEqualTo: selectedBuoyId)
+          .where('parameter', isEqualTo: sensorKey)
           .where('timestamp_ms',
               isGreaterThanOrEqualTo: startOfDay.millisecondsSinceEpoch)
-          .orderBy('timestamp_ms', descending: true) // ✅ เปลี่ยนเป็น true
+          .where('timestamp_ms',
+              isLessThanOrEqualTo: endOfDay.millisecondsSinceEpoch)
+          .orderBy('timestamp_ms', descending: false)
+          .limit(500)
           .get();
 
       List<SensorData> data = [];
@@ -188,23 +216,18 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       for (var doc in querySnapshot.docs) {
         final docData = doc.data();
         final value = docData['value'];
+        final timestampMs = docData['timestamp_ms'] as int?;
 
-        DateTime? timestamp;
-        if (docData['timestamp_ms'] != null) {
-          timestamp = DateTime.fromMillisecondsSinceEpoch(
-              docData['timestamp_ms'] as int);
-        }
+        if (value != null && timestampMs != null) {
+          final timestamp = DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
-        if (value != null && timestamp != null) {
-          if (timestamp.isAfter(startOfDay) && timestamp.isBefore(endOfDay)) {
-            data.add(SensorData(
-              value: (value as num).toDouble(),
-              timestamp: timestamp,
-            ));
-          }
+          data.add(SensorData(
+            value: (value as num).toDouble(),
+            timestamp: timestamp,
+          ));
         }
       }
-      data.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
       print('✅ Found ${data.length} data points for $sensorKey');
 
       setState(() {
@@ -249,11 +272,8 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
             icon: const Icon(Icons.refresh, color: Colors.black),
             onPressed: () {
               setState(() {
-                // ✅ รีเซ็ตวันที่ทั้งหมดกลับเป็น null เพื่อให้ dropdown แสดง "Date"
                 selectedDates.updateAll((key, value) => null);
               });
-
-              // ✅ โหลดข้อมูลใหม่ตาม period ปัจจุบัน (Day / Week / Month)
               _fetchSensorData();
             },
           ),
@@ -263,6 +283,80 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                // ✅ Buoy Selector (ใหม่)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  color: Colors.white,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.water, color: Colors.blue, size: 20),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Select Buoy:',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: isLoadingBuoys
+                            ? const Center(
+                                child: SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            : Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.blue),
+                                  borderRadius: BorderRadius.circular(8),
+                                  color: Colors.blue.withOpacity(0.05),
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: selectedBuoyId,
+                                    isExpanded: true,
+                                    icon: const Icon(Icons.arrow_drop_down,
+                                        color: Colors.blue),
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.black87,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    items: availableBuoys.map((String buoyId) {
+                                      return DropdownMenuItem<String>(
+                                        value: buoyId,
+                                        child: Text(buoyId.toUpperCase()),
+                                      );
+                                    }).toList(),
+                                    onChanged: (String? newValue) {
+                                      if (newValue != null) {
+                                        setState(() {
+                                          selectedBuoyId = newValue;
+                                          // รีเซ็ตวันที่เมื่อเปลี่ยนทุ่น
+                                          selectedDates
+                                              .updateAll((key, value) => null);
+                                        });
+                                        _fetchSensorData();
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Divider(height: 1),
+
                 // Period selector
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -315,6 +409,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
         onTap: () {
           setState(() {
             selectedPeriod = period;
+            selectedDates.updateAll((key, value) => null);
           });
           _fetchSensorData();
         },
@@ -373,10 +468,16 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
               ],
             ),
             const SizedBox(height: 80),
-            const Center(
-              child: Text(
-                'No data available',
-                style: TextStyle(color: Colors.grey),
+            Center(
+              child: Column(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.grey[400], size: 40),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No data available for $selectedBuoyId',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 80),
@@ -385,7 +486,6 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       );
     }
 
-    // คำนวณ min/max อัตโนมัติ
     List<double> values = data.map((e) => e.value).toList();
     double minValue = values.reduce((a, b) => a < b ? a : b);
     double maxValue = values.reduce((a, b) => a > b ? a : b);
@@ -456,11 +556,8 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                   leftTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
-                      //reservedSize: 40,
                       reservedSize: 50,
                       interval: (maxY - minY) / 2,
-                      //interval: (maxY - minY) / 4,
-                      //interval: (maxY - minY) / 5,
                       getTitlesWidget: (value, meta) {
                         double midValue = (minY + maxY) / 2;
                         if ((value - minY).abs() < 0.01 ||
@@ -471,7 +568,6 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                             style: const TextStyle(
                               fontSize: 11,
                               color: Colors.grey,
-                              //
                             ),
                           );
                         }
@@ -602,51 +698,6 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       ),
     );
   }
-
-  /* Widget _buildBottomNavigationBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: Colors.blue,
-        unselectedItemColor: Colors.grey,
-        selectedFontSize: 12,
-        unselectedFontSize: 12,
-        currentIndex: 1,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.show_chart),
-            label: 'History',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.add_box_outlined),
-            label: 'Add',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: 'Forecast',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.storefront_outlined),
-            label: 'Store',
-          ),
-        ],
-      ),
-    );
-  }*/
 }
 
 class SensorData {
