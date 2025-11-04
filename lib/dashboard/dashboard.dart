@@ -18,12 +18,57 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   String _userName = "-";
 
-  // ✅ 2️⃣ วางฟังก์ชันนี้ “ต่อจากตัวแปร”
-  Future<void> _fetchUserName() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  int _selectedIndex = 0;
 
+  final DatabaseReference _database = FirebaseDatabase.instance.ref();
+  StreamSubscription<DatabaseEvent>? _dataSubscription;
+  StreamSubscription<DatabaseEvent>? _sensorSubscription;
+  StreamSubscription<DatabaseEvent>? _stateSubscription;
+
+  String? selectedBuoyId;
+  List<String> buoyIds = [];
+
+  Map<String, dynamic> sensorData = {};
+  double totalScore = 0.0;
+  bool isLoading = true;
+  bool hasData = false;
+
+  DateTime? lastUpdated;
+  double _rotationAngle = 0;
+
+  Map<String, bool> sensorStatus = {
+    'PH': false,
+    'TDS/EC': false,
+    'Turbidity': false,
+    'Temperature': false,
+    'Rain': false,
+  };
+
+  // เก็บสถานะ offline รายเซนเซอร์
+  Map<String, bool> _sensorOfflineMap = {
+    'ph': false,
+    'tds': false,
+    'ec': false,
+    'turbidity': false,
+    'temperature': false,
+    'rainfall': false,
+  };
+
+  bool _isDisposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserName();
+    _loadBuoyList();
+  }
+
+  // ⬇️ ดึงชื่อจาก Firestore
+  Future<void> _loadUserName() async {
     try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -31,17 +76,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (doc.exists) {
         final data = doc.data()!;
-        final firstName = data['firstname']?.toString() ?? '-';
+        final firstName = data['firstname']?.toString() ?? '';
+
         setState(() {
-          _userName = firstName.isEmpty ? '-' : firstName;
+          _userName = firstName.isNotEmpty ? firstName : 'User';
+        });
+      } else {
+        setState(() {
+          _userName = 'User';
         });
       }
     } catch (e) {
-      print("⚠️ Error loading user name: $e");
+      print('❌ Error loading user name: $e');
     }
   }
-
-  int _selectedIndex = 0;
 
   void _onNavTapped(int index) {
     if (!mounted) return;
@@ -65,102 +113,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  final DatabaseReference _database = FirebaseDatabase.instance.ref();
-  StreamSubscription<DatabaseEvent>? _dataSubscription;
-  StreamSubscription<DatabaseEvent>? _sensorSubscription;
-  StreamSubscription<DatabaseEvent>? _stateSubscription;
-  String? selectedBuoyId;
-  List<String> buoyIds = [];
-
-  Map<String, dynamic> sensorData = {};
-  double totalScore = 0.0;
-  bool isLoading = true;
-  bool hasData = false;
-  //String _userName = 'User'; // ✅ เพิ่มตรงนี้
-
-  DateTime? lastUpdated;
-  double _rotationAngle = 0;
-
-  Map<String, bool> sensorStatus = {
-    'PH': false,
-    'TDS/EC': false,
-    'Turbidity': false,
-    'Temperature': false,
-    'Rain': false,
-  };
-
-  // ✅ เพิ่มตัวแปรเก็บสถานะ sensor ที่ offline
-  Map<String, bool> _sensorOfflineMap = {
-    'ph': false,
-    'tds': false,
-    'ec': false,
-    'turbidity': false,
-    'temperature': false,
-    'rainfall': false,
-  };
-
-  bool _isDisposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchUserName();
-    _loadUserName();
-    _loadBuoyList();
-  }
-
-  // ✅ เพิ่มฟังก์ชันนี้ก่อน _loadBuoyList()
-  Future<void> _loadUserName() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (doc.exists) {
-        final data = doc.data()!;
-        final firstName = data['firstname'] ?? ''; // ✅ ดึงชื่อจริง
-
-        setState(() {
-          _userName = firstName.isNotEmpty ? firstName : 'User';
-        });
-
-        print('✅ Loaded firstname: $_userName');
-      } else {
-        print('⚠️ ไม่พบข้อมูลใน users/${user.uid}');
-      }
-    } catch (e) {
-      print('❌ Error loading user name: $e');
-    }
-  }
-
-  /*Future<void> _loadBuoyList() async {
-    try {
-      final snapshot = await _database.child('buoys').get();
-
-      if (snapshot.exists) {
-        final data = snapshot.value as Map;
-        final buoyList = data.keys.map((key) => key.toString()).toList();
-
-        setState(() {
-          buoyIds = buoyList;
-          if (buoyList.isNotEmpty) {
-            selectedBuoyId = buoyList.first;
-            _loadBuoyData();
-          }
-          isLoading = false;
-        });
-      } else {
-        setState(() => isLoading = false);
-      }
-    } catch (e) {
-      print('❌ Error loading buoy list: $e');
-      setState(() => isLoading = false);
-    }
-  }*/
+  // ⬇️ ดึงทุ่นของ user จาก Firestore
   Future<void> _loadBuoyList() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
@@ -169,7 +122,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // ✅ ดึงเฉพาะทุ่นของ user คนนี้จาก buoy_registry
       final registrySnap = await FirebaseFirestore.instance
           .collection('buoy_registry')
           .where('uid', isEqualTo: user.uid)
@@ -186,7 +138,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // ✅ เก็บ buoy_id ของ user
       final userBuoyIds = registrySnap.docs
           .map((doc) => doc.data()['buoy_id'] as String?)
           .where((id) => id != null)
@@ -210,16 +161,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // ✅ แก้ไข: ฟัง per_sensor + state + history (แต่ไม่เขียนทับค่า "-")
+  // ⬇️ โหลดข้อมูล Realtime DB ของทุ่นนั้นๆ
   Future<void> _loadBuoyData() async {
     if (selectedBuoyId == null) return;
 
-    // ยกเลิกการฟังเดิม (ถ้ามี)
+    // ยกเลิก listener เดิม
     await _dataSubscription?.cancel();
     await _sensorSubscription?.cancel();
     await _stateSubscription?.cancel();
 
-    // รีเซ็ตค่าเริ่มต้น
+    // รีเซ็ตค่าเริ่ม
     setState(() {
       sensorStatus = {
         'PH': false,
@@ -241,38 +192,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
       hasData = false;
     });
 
-    // ✅ โหลดค่า state ครั้งแรกจาก Firebase
+    // 1) โหลด state เริ่มต้น
     try {
       final stateSnap =
           await _database.child('buoys/$selectedBuoyId/status/state').get();
       if (stateSnap.exists) {
-        final stateValue = stateSnap.value;
-        print('🔍 initial state: $stateValue');
-        _updateGlobalState(stateValue);
+        _updateGlobalState(stateSnap.value);
       } else {
-        print('⚠️ ไม่พบค่า state เริ่มต้นใน Firebase');
+        // ถ้าไม่มี state → ให้ถือว่า online ไปเลย
+        setState(() {
+          sensorStatus.updateAll((key, value) => true);
+          _sensorOfflineMap.updateAll((key, value) => false);
+        });
       }
     } catch (e) {
       print('❌ Error loading initial state: $e');
     }
 
-    // ✅ โหลดค่า per_sensor ครั้งแรกจาก Firebase
+    // 2) โหลด per_sensor เริ่มต้น
     try {
       final perSensorSnap = await _database
           .child('buoys/$selectedBuoyId/status/per_sensor')
           .get();
       if (perSensorSnap.exists) {
         final perValue = perSensorSnap.value;
-        print('🔍 initial per_sensor: $perValue');
         if (perValue is Map) _updatePerSensorStatus(perValue);
       } else {
-        print('⚠️ ไม่พบค่า per_sensor เริ่มต้นใน Firebase');
+        // ถ้าไม่มี per_sensor → ถือว่า online ทุกตัว
+        setState(() {
+          sensorStatus.updateAll((key, value) => true);
+          _sensorOfflineMap.updateAll((key, value) => false);
+        });
       }
     } catch (e) {
       print('❌ Error loading per_sensor: $e');
     }
 
-    // ✅ 1. ฟังข้อมูลจาก history (ค่าความบริสุทธิ์น้ำล่าสุด)
+    // 3) ฟัง history ล่าสุด (ค่าเซนเซอร์)
     _dataSubscription = _database
         .child('buoys/$selectedBuoyId/history')
         .limitToLast(1)
@@ -290,29 +246,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final latestData =
           Map<String, dynamic>.from(dateData[latestTimestamp] as Map);
 
-      // ถ้า state offline → ไม่อัปเดตข้อมูล
-      if (sensorStatus.values.every((s) => s == false)) {
-        print('⚠️ state offline → ข้ามการอัปเดต history');
-        return;
-      }
-
       setState(() {
-        if (!_sensorOfflineMap['ph']!)
-          sensorData['ph'] = latestData['ph'] ?? 0.0;
-        if (!_sensorOfflineMap['tds']!)
-          sensorData['tds'] = latestData['tds'] ?? 0.0;
-        if (!_sensorOfflineMap['ec']!)
-          sensorData['ec'] = latestData['ec'] ?? 0.0;
-        if (!_sensorOfflineMap['turbidity']!)
-          sensorData['turbidity'] = latestData['turbidity'] ?? 0.0;
-        if (!_sensorOfflineMap['temperature']!)
-          sensorData['temperature'] = latestData['temperature'] ?? 0.0;
-        if (!_sensorOfflineMap['rainfall']!)
-          sensorData['rainfall'] = latestData['rainfall'] ?? 0.0;
+        // อัปเดตค่าจริง
+        sensorData['ph'] = latestData['ph'] ?? "-";
+        sensorData['tds'] = latestData['tds'] ?? "-";
+        sensorData['ec'] = latestData['ec'] ?? "-";
+        sensorData['turbidity'] = latestData['turbidity'] ?? "-";
+        sensorData['temperature'] = latestData['temperature'] ?? "-";
+        sensorData['rainfall'] = latestData['rainfall'] ?? "-";
 
         totalScore = _toDouble(latestData['total_score']);
 
-        // อัปเดตเวลา
         if (latestData['timestamp_ms'] != null) {
           lastUpdated =
               DateTime.fromMillisecondsSinceEpoch(latestData['timestamp_ms']);
@@ -324,35 +268,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         hasData = true;
         isLoading = false;
+
+        // ถ้ามี data แล้ว แต่ per_sensor ยังไม่ได้ส่งมา → ถือว่า online
+        sensorStatus.updateAll((key, value) => true);
+        _sensorOfflineMap.updateAll((key, value) => false);
       });
 
       print('✅ Updated history data: $latestData');
     });
 
-    // ✅ 2. ฟังสถานะ per_sensor (เปลี่ยนสีจุดและข้อมูลแต่ละ sensor)
+    // 4) ฟัง per_sensor แบบ realtime
     _sensorSubscription = _database
         .child('buoys/$selectedBuoyId/status/per_sensor')
         .onValue
         .listen((DatabaseEvent event) {
       if (_isDisposed) return;
       final value = event.snapshot.value;
-      print('📡 per_sensor update: $value');
       if (value != null && value is Map) {
         _updatePerSensorStatus(value);
+      } else {
+        // ถ้าไม่มีค่าเลย ก็อย่าให้มันเป็นแดงทั้งหมด
+        setState(() {
+          sensorStatus.updateAll((key, value) => true);
+          _sensorOfflineMap.updateAll((key, value) => false);
+        });
       }
     });
 
-    // ✅ 3. ฟังสถานะ state (online/offline)
+    // 5) ฟัง state (online/offline)
     _stateSubscription = _database
         .child('buoys/$selectedBuoyId/status/state')
         .onValue
         .listen((DatabaseEvent event) {
       if (_isDisposed) return;
       final value = event.snapshot.value;
-      print('📡 state update: $value');
-      if (value != null) {
-        _updateGlobalState(value);
-      }
+      _updateGlobalState(value);
     });
   }
 
@@ -364,7 +314,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return 0.0;
   }
 
-  // ✅ แก้ไข: อัปเดตสถานะรายเซนเซอร์ + เก็บสถานะ offline
+  // ⬇️ อัปเดตสถานะรายเซนเซอร์
   void _updatePerSensorStatus(Map value) {
     final perSensor = Map<String, dynamic>.from(value);
     bool isOnline(v) =>
@@ -399,6 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!rainOnline) sensorData['rainfall'] = "-";
     });
 
+    // ถ้ามีตัวไหน offline/delayed → WQI = 0 ได้เลย
     bool anySensorOffline = perSensor.values.any((v) {
       final s = v.toString().trim().toLowerCase();
       return s == 'offline' || s == 'delayed';
@@ -406,86 +357,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (anySensorOffline) {
       setState(() => totalScore = 0.0);
-      print('⚠️ มี sensor บางตัว offline/delayed → ตั้ง WQI = 0%');
     }
-
-    print('✅ per_sensor updated: $perSensor');
   }
 
-  // ✅ แก้ไข: อัปเดต global state
-  /* void _updateGlobalState(dynamic stateValue) {
-    if (stateValue is String && stateValue != 'online') {
-      // ถ้า state = "offline" → ตั้ง WQI = 0 และทุกกล่องเป็น "-"
-      setState(() {
-        totalScore = 0.0;
-
-        // ✅ ตั้งทุก sensor เป็น offline
-        _sensorOfflineMap.updateAll((key, value) => true);
-        sensorStatus.updateAll((key, value) => false);
-        sensorData.updateAll((key, value) => "-");
-      });
-      print('⚠️ state offline >30 นาที → WQI = 0% และทุก sensor offline');
-    } else {
-      print('✅ state = online → ใช้ค่าปกติ');
-      // ไม่ต้องทำอะไร เพราะ per_sensor จะควบคุมเอง
-    }
-  }*/
-  /* void _updateGlobalState(dynamic stateValue) async {
-    if (stateValue is String && stateValue != 'online') {
-      // 🔍 อ่านเวลาจาก Firebase
-      final snapshot = await _database
-          .child('buoys/$selectedBuoyId/status/last_checked_ms')
-          .get();
-
-      if (snapshot.exists) {
-        final lastCheckedMs = snapshot.value as int;
-        final lastChecked = DateTime.fromMillisecondsSinceEpoch(lastCheckedMs);
-        final now = DateTime.now();
-        final diffMinutes = now.difference(lastChecked).inMinutes;
-
-        print('🕒 state = offline, last update: $diffMinutes นาทีที่แล้ว');
-
-        if (diffMinutes >= 30) {
-          setState(() {
-            totalScore = 0.0;
-            _sensorOfflineMap.updateAll((key, value) => true);
-            sensorStatus.updateAll((key, value) => false);
-            sensorData.updateAll((key, value) => "-");
-          });
-          print(
-              '⚠️ state offline เกิน 30 นาที → ตั้ง WQI = 0% และทุก sensor offline');
-        }
-      } else {
-        print('⚠️ ไม่มี last_checked_ms ใน Firebase');
-      }
-    } else {
-      print('✅ state = online → ใช้ค่าปกติ');
-    }
-  }*/
-
-  /*void _updateGlobalState(dynamic stateValue) async {
-    if (stateValue is String && stateValue.trim().toLowerCase() == 'offline') {
-      print('⚠️ state = offline → ตั้ง WQI = 0% และทุก sensor offline (ทันที)');
-
-      setState(() {
-        totalScore = 0.0;
-        _sensorOfflineMap.updateAll((key, value) => true);
-        sensorStatus.updateAll((key, value) => false);
-        sensorData.updateAll((key, value) => "-");
-      });
-    } else if (stateValue is String &&
-        stateValue.trim().toLowerCase() == 'online') {
-      print('✅ state = online → ใช้ค่าปกติ');
-    } else {
-      print('ℹ️ state ไม่ใช่ค่า online/offline ที่รู้จัก: $stateValue');
-    }
-  }*/
-
-  void _updateGlobalState(dynamic stateValue) async {
+  // ⬇️ อัปเดต global state
+  void _updateGlobalState(dynamic stateValue) {
     final state = stateValue?.toString().trim().toLowerCase() ?? '';
 
     if (state == 'offline') {
-      print('⚠️ state = offline → ตั้ง WQI = 0% และทุก sensor offline');
       setState(() {
         totalScore = 0.0;
         _sensorOfflineMap.updateAll((key, value) => true);
@@ -493,18 +372,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
         sensorData.updateAll((key, value) => "-");
       });
     } else if (state == 'online') {
-      print('✅ state = online → ใช้ค่าปกติ');
+      // ออนไลน์ก็ไม่ต้องทำอะไร ปล่อยให้ per_sensor จัดการ
     } else {
-      print('ℹ️ state ไม่รู้จัก: $state');
+      // ถ้าไม่มีค่าเลย ให้ถือว่า online
+      setState(() {
+        sensorStatus.updateAll((key, value) => true);
+        _sensorOfflineMap.updateAll((key, value) => false);
+      });
     }
   }
 
   double _calculateScore(String sensorType, double value) {
     switch (sensorType) {
       case 'PH':
-        if (value >= 6.5 && value <= 8.59) return 85.5;
-        if ((value >= 6.0 && value < 6.5) || (value > 8.5 && value <= 9.0))
+        if (value >= 6.5 && value <= 8.599999) return 85.5;
+        if ((value >= 6.0 && value < 6.5) || (value >= 8.6 && value <= 9.09)) {
           return 60.0;
+        }
         return 24.5;
 
       case 'TDS':
@@ -524,8 +408,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       case 'Temperature':
         if (value >= 26 && value <= 30) return 85.5;
-        if ((value >= 23 && value < 26) || (value > 30 && value <= 33))
+        if ((value >= 23 && value < 26) || (value >= 31 && value <= 33)) {
           return 60.0;
+        }
         return 24.5;
 
       case 'Rain':
@@ -578,7 +463,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset(
-                  'assets/images/line_qr.png', // ← ชื่อไฟล์ QR ของเธอ
+                  'assets/images/line_qr.png',
                   width: 230,
                   height: 230,
                   fit: BoxFit.cover,
@@ -608,7 +493,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -625,25 +510,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _buildAppBar(),
               Expanded(
                 child: isLoading
-                    ? Center(
-                        child: CircularProgressIndicator(color: Colors.white))
+                    ? const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      )
                     : SingleChildScrollView(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 20),
                         child: Column(
                           children: [
                             _buildBuoySelector(),
-                            SizedBox(height: 20),
+                            const SizedBox(height: 20),
                             if (hasData) ...[
                               _buildWaterQualityCard(),
-                              SizedBox(height: 20),
+                              const SizedBox(height: 20),
                               _buildSensorGrid(),
-                              SizedBox(height: 20),
+                              const SizedBox(height: 20),
                               _buildSensorStatus(),
                             ] else
                               Center(
                                 child: Padding(
-                                  padding: EdgeInsets.all(40),
+                                  padding: const EdgeInsets.all(40),
                                   child: Text(
                                     'No data available',
                                     style: GoogleFonts.inter(
@@ -663,14 +549,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       bottomNavigationBar: CustomBottomNav(
         currentIndex: _selectedIndex,
-        //onTap: _onNavTapped,
+        // ถ้าอยากให้กดแล้วสลับหน้า เปิดอันนี้: onTap: _onNavTapped,
       ),
     );
   }
 
   Widget _buildAppBar() {
-    return Container(
-      padding: EdgeInsets.all(20),
+    return Padding(
+      padding: const EdgeInsets.all(20),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -681,7 +567,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   style:
                       GoogleFonts.inter(fontSize: 14, color: Colors.white70)),
               Text(
-                _userName, // ✅ ดึงชื่อจริงจาก Firestore
+                _userName,
                 style: GoogleFonts.inter(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -693,13 +579,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             children: [
               IconButton(
-                icon: FaIcon(FontAwesomeIcons.line, color: Colors.white),
-                //onPressed: () {}),
-                onPressed: _showLineQRDialog, // 👈 เปลี่ยนตรงนี้
+                icon: const FaIcon(FontAwesomeIcons.line, color: Colors.white),
+                onPressed: _showLineQRDialog,
               ),
               IconButton(
-                  icon: Icon(Icons.settings, color: Colors.white),
-                  onPressed: () {}),
+                icon: const Icon(Icons.settings, color: Colors.white),
+                onPressed: () {
+                  Navigator.pushNamed(context, '/profile-settings');
+                },
+              ),
             ],
           ),
         ],
@@ -709,7 +597,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildBuoySelector() {
     return Container(
-      padding: EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -720,7 +608,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Text('Select a buoy to monitor',
               style:
                   GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600)),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           DropdownButton<String>(
             value: selectedBuoyId,
             isExpanded: true,
@@ -743,7 +631,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final statusColor = _getColor(totalScore);
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(24),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -757,7 +645,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          SizedBox(height: 20),
+          const SizedBox(height: 20),
           SizedBox(
             width: 180,
             height: 180,
@@ -779,9 +667,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-          SizedBox(height: 16),
+          const SizedBox(height: 16),
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
             decoration: BoxDecoration(
               color: statusColor.withOpacity(0.15),
               borderRadius: BorderRadius.circular(20),
@@ -795,29 +683,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-          SizedBox(height: 16),
+          const SizedBox(height: 16),
           if (lastUpdated != null)
             Align(
               alignment: Alignment.centerLeft,
               child: Padding(
-                padding: EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.only(right: 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     AnimatedRotation(
                       turns: _rotationAngle / (2 * math.pi),
-                      duration: Duration(milliseconds: 800),
+                      duration: const Duration(milliseconds: 800),
                       child: Container(
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           color: Color(0xFF1E3C72),
                           shape: BoxShape.circle,
                         ),
-                        padding: EdgeInsets.all(6),
-                        child:
-                            Icon(Icons.refresh, color: Colors.white, size: 14),
+                        padding: const EdgeInsets.all(6),
+                        child: const Icon(Icons.refresh,
+                            color: Colors.white, size: 14),
                       ),
                     ),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Text(
                       _formatDateTime(lastUpdated!),
                       style: GoogleFonts.inter(
@@ -838,7 +726,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
-      physics: NeverScrollableScrollPhysics(),
+      physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 16,
       crossAxisSpacing: 16,
       children: [
@@ -847,12 +735,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _buildSensorCard('EC', sensorData['ec'] ?? 0.0, 'μS/cm'),
         _buildSensorCard('Turbidity', sensorData['turbidity'] ?? 0.0, 'NTU'),
         _buildSensorCard('Temperature', sensorData['temperature'] ?? 0.0, '°C'),
-        _buildSensorCard('Rain', sensorData['rainfall'] ?? 0.0, 'mm'),
+        _buildSensorCard('Rain', sensorData['rainfall'] ?? 0.0, 'ADC'),
       ],
     );
   }
 
-  // ✅ แก้ไข: จุดสีแดงเมื่อ offline
   Widget _buildSensorCard(String title, dynamic value, String unit) {
     double? numValue;
     String displayValue;
@@ -866,7 +753,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       displayValue = numValue.toStringAsFixed(2);
     }
 
-    // ✅ ถ้า offline → จุดสีแดง, ถ้า online → คำนวณตาม score
     Color indicatorColor;
     if (isOffline) {
       indicatorColor = Colors.red;
@@ -876,7 +762,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     return Container(
-      padding: EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -906,7 +792,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-          Spacer(),
+          const Spacer(),
           Text(displayValue,
               style:
                   GoogleFonts.inter(fontSize: 28, fontWeight: FontWeight.bold)),
@@ -919,11 +805,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildSensorStatus() {
     return Container(
-      padding: EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
             color: Colors.black12,
             blurRadius: 8,
@@ -941,7 +827,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               color: Colors.black87,
             ),
           ),
-          SizedBox(height: 20),
+          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: sensorStatus.entries.map((entry) {
@@ -956,7 +842,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       shape: BoxShape.circle,
                     ),
                   ),
-                  SizedBox(height: 6),
+                  const SizedBox(height: 6),
                   Text(
                     entry.key,
                     style: GoogleFonts.inter(
@@ -965,7 +851,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       color: Colors.black87,
                     ),
                   ),
-                  SizedBox(height: 2),
+                  const SizedBox(height: 2),
                   Text(
                     isOnline ? 'Online' : 'Offline',
                     style: GoogleFonts.inter(
@@ -983,25 +869,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Color _getColor(double score) {
-    if (score > 70) return Colors.green;
-    if (score > 49) return Colors.yellow;
+    if (score > 70.00) return Colors.green;
+    if (score > 49.00) return Colors.yellow;
     return Colors.red;
   }
 
   String _getStatus(double score) {
-    if (score > 70) return 'Excellent';
-    if (score > 49) return 'Warning';
+    if (score > 70.00) return 'Excellent';
+    if (score > 49.00) return 'Warning';
     return 'Critical';
   }
 }
 
 String _formatDateTime(DateTime dateTime) {
   final local = dateTime.toLocal();
-  final d = dateTime.day.toString().padLeft(2, '0');
-  final m = dateTime.month.toString().padLeft(2, '0');
+  final d = local.day.toString().padLeft(2, '0');
+  final m = local.month.toString().padLeft(2, '0');
   final y = local.year.toString();
-  final h = dateTime.hour.toString().padLeft(2, '0');
-  final min = dateTime.minute.toString().padLeft(2, '0');
+  final h = local.hour.toString().padLeft(2, '0');
+  final min = local.minute.toString().padLeft(2, '0');
   return '$d/$m/$y $h:$min';
 }
 
@@ -1020,7 +906,7 @@ class CircularProgressPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = math.min(size.width / 2, size.height / 2);
-    final strokeWidth = 12.0;
+    const strokeWidth = 12.0;
 
     final backgroundPaint = Paint()
       ..color = backgroundColor

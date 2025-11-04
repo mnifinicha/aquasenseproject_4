@@ -20,6 +20,8 @@ import 'addbuoy/addbuoy.dart';
 import 'pageonelogin/login_screen.dart';
 import 'add_buoy_list_screen.dart';
 import 'ml/ml.dart';
+import 'setting/ProfileSettingsScreen.dart';
+import 'admin/admin_user_management.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,11 +56,11 @@ class AquaSenseApp extends StatelessWidget {
         '/add-buoy': (_) => const AddBuoyScreen(),
         '/add': (context) => const AddBuoyListScreen(),
         '/forecast': (context) => const WaterForecastPage(),
+        '/profile-settings': (context) => const ProfileSettingsScreen(),
+        '/admin-users': (context) => const AdminDashboardScreen(),
       },
 
       // initialRoute: '/',
-      // ชั่วคราวให้เข้าหน้า Login เพื่อทดสอบการเชื่อม (เปลี่ยนกลับเป็น Address ได้)
-      //home: const DashboardScreen(),
     );
   }
 }

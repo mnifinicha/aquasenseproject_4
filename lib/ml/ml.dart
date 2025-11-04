@@ -537,7 +537,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                             child: Row(
                               children: [
                                 const Text(
-                                  'ดูข้อมูลย้อนหลัง:',
+                                  'View History:',
                                   style: TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600),
@@ -547,7 +547,7 @@ class _WaterForecastPageState extends State<WaterForecastPage> {
                                   icon: const Icon(Icons.date_range),
                                   label: Text(
                                     _selectedDate == null
-                                        ? 'เลือกวันที่'
+                                        ? 'Date'
                                         : DateFormat('d MMM yyyy')
                                             .format(_selectedDate!),
                                   ),

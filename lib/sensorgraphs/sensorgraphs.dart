@@ -19,12 +19,7 @@ class SensorGraphsPage extends StatefulWidget {
 class _SensorGraphsPageState extends State<SensorGraphsPage> {
   String selectedPeriod = 'Day';
 
-  // ✅ เพิ่มตัวแปรเก็บทุ่นที่เลือก
-  late String selectedBuoyId;
-
-  // ✅ รายชื่อทุ่นทั้งหมด
-  List<String> availableBuoys = [];
-
+  // วันที่ที่เลือกของแต่ละ sensor
   final Map<String, DateTime?> selectedDates = {
     'temperature': null,
     'ph': null,
@@ -34,6 +29,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
     'tds': null,
   };
 
+  // เก็บข้อมูลจาก Firestore
   Map<String, List<SensorData>> sensorHistory = {
     'temperature': [],
     'ph': [],
@@ -44,47 +40,26 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
   };
 
   bool isLoading = true;
-  bool isLoadingBuoys = true;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // ✅ ช่วงค่าคงที่ของแต่ละ sensor
+  // ถ้าจะเปลี่ยนภายหลัง แก้ที่นี่จุดเดียว
+  final Map<String, _SensorRange> sensorRanges = const {
+    'ph': _SensorRange(0, 14),
+    'tds': _SensorRange(0, 1500),
+    'ec': _SensorRange(0, 2240),
+    'turbidity': _SensorRange(0, 1000),
+    'temperature': _SensorRange(-20, 105),
+    'rainfall': _SensorRange(0, 1023), // ถ้าอยากเป็น 0–1023 เปลี่ยนตรงนี้
+  };
 
   @override
   void initState() {
     super.initState();
-    selectedBuoyId = widget.buoyId; // ✅ ใช้ค่าเริ่มต้น
-    _fetchAvailableBuoys(); // ✅ ดึงรายชื่อทุ่นทั้งหมด
     _fetchSensorData();
   }
 
-  // ✅ ดึงรายชื่อทุ่นทั้งหมด
-  Future<void> _fetchAvailableBuoys() async {
-    try {
-      final querySnapshot =
-          await _firestore.collection('sensor_timeseries').get();
-
-      // ดึง buoy_id ที่ไม่ซ้ำกัน
-      Set<String> buoySet = {};
-      for (var doc in querySnapshot.docs) {
-        final buoyId = doc.data()['buoy_id'] as String?;
-        if (buoyId != null) {
-          buoySet.add(buoyId);
-        }
-      }
-
-      setState(() {
-        availableBuoys = buoySet.toList()..sort();
-        isLoadingBuoys = false;
-      });
-
-      print('🎯 Available buoys: $availableBuoys');
-    } catch (e) {
-      print('❌ Error fetching buoys: $e');
-      setState(() {
-        isLoadingBuoys = false;
-      });
-    }
-  }
-
-  // ✅ ดึงข้อมูลตามทุ่นที่เลือก
+  // ดึงข้อมูลทั้งหมดจาก Firestore ตาม period (Day/Week/Month)
   Future<void> _fetchSensorData() async {
     setState(() {
       isLoading = true;
@@ -93,19 +68,20 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
     try {
       DateTime startDate = _getStartDate(selectedPeriod);
 
-      print('🔍 Fetching data for buoy: $selectedBuoyId from: $startDate');
-
-      // ✅ ใช้ selectedBuoyId แทน widget.buoyId
       final querySnapshot = await _firestore
           .collection('sensor_timeseries')
-          .where('buoy_id', isEqualTo: selectedBuoyId)
-          .where('timestamp_ms',
-              isGreaterThanOrEqualTo: startDate.millisecondsSinceEpoch)
+          .where('buoy_id', isEqualTo: widget.buoyId)
           .orderBy('timestamp_ms', descending: false)
-          .limit(1000)
           .get();
 
-      print('📊 Total records found: ${querySnapshot.docs.length}');
+      final filteredDocs = querySnapshot.docs.where((doc) {
+        final ts = doc['timestamp_ms'];
+        if (ts is int) {
+          final time = DateTime.fromMillisecondsSinceEpoch(ts);
+          return time.isAfter(startDate);
+        }
+        return false;
+      }).toList();
 
       if (querySnapshot.docs.isNotEmpty) {
         Map<String, List<SensorData>> tempData = {
@@ -117,21 +93,28 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           'tds': [],
         };
 
-        for (var doc in querySnapshot.docs) {
+        for (var doc in filteredDocs) {
           final data = doc.data();
-          final parameter = (data['parameter'] as String?)?.toLowerCase();
+          final parameter = data['parameter'] as String?;
           final value = data['value'];
-          final timestampMs = data['timestamp_ms'] as int?;
 
-          if (parameter != null && value != null && timestampMs != null) {
-            if (tempData.containsKey(parameter)) {
-              final timestamp =
-                  DateTime.fromMillisecondsSinceEpoch(timestampMs);
+          DateTime? timestamp;
+          if (data['timestamp_ms'] != null) {
+            timestamp = DateTime.fromMillisecondsSinceEpoch(
+                data['timestamp_ms'] as int);
+          } else {
+            continue;
+          }
 
-              tempData[parameter]!.add(SensorData(
-                value: (value as num).toDouble(),
-                timestamp: timestamp,
-              ));
+          if (parameter != null && value != null) {
+            final sensorKey = parameter.toLowerCase();
+            if (tempData.containsKey(sensorKey)) {
+              tempData[sensorKey]!.add(
+                SensorData(
+                  value: (value as num).toDouble(),
+                  timestamp: timestamp,
+                ),
+              );
             }
           }
         }
@@ -140,28 +123,12 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           sensorHistory = tempData;
           isLoading = false;
         });
-
-        print('\n📈 Data Summary:');
-        sensorHistory.forEach((key, value) {
-          print('   $key: ${value.length} data points');
-        });
       } else {
-        print('⚠️ No documents found for $selectedBuoyId');
         setState(() {
-          // ✅ รีเซ็ตข้อมูลเมื่อไม่มีข้อมูล
-          sensorHistory = {
-            'temperature': [],
-            'ph': [],
-            'turbidity': [],
-            'ec': [],
-            'rainfall': [],
-            'tds': [],
-          };
           isLoading = false;
         });
       }
     } catch (e) {
-      print('❌ Error fetching data: $e');
       setState(() {
         isLoading = false;
       });
@@ -190,25 +157,19 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
     }
   }
 
+  // ดึงข้อมูลของวันนั้น ๆ สำหรับ sensor เดียว
   Future<void> _fetchDataByDate(String sensorKey, DateTime date) async {
     try {
       final startOfDay = DateTime(date.year, date.month, date.day, 0, 0, 0);
       final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
-      print(
-          '🔍 Fetching $sensorKey for buoy: $selectedBuoyId, date: ${DateFormat('dd/MM/yyyy').format(date)}');
-
-      // ✅ ใช้ selectedBuoyId
       final querySnapshot = await _firestore
           .collection('sensor_timeseries')
-          .where('buoy_id', isEqualTo: selectedBuoyId)
+          .where('buoy_id', isEqualTo: widget.buoyId)
           .where('parameter', isEqualTo: sensorKey)
           .where('timestamp_ms',
               isGreaterThanOrEqualTo: startOfDay.millisecondsSinceEpoch)
-          .where('timestamp_ms',
-              isLessThanOrEqualTo: endOfDay.millisecondsSinceEpoch)
-          .orderBy('timestamp_ms', descending: false)
-          .limit(500)
+          .orderBy('timestamp_ms', descending: true)
           .get();
 
       List<SensorData> data = [];
@@ -216,26 +177,29 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       for (var doc in querySnapshot.docs) {
         final docData = doc.data();
         final value = docData['value'];
-        final timestampMs = docData['timestamp_ms'] as int?;
 
-        if (value != null && timestampMs != null) {
-          final timestamp = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+        DateTime? timestamp;
+        if (docData['timestamp_ms'] != null) {
+          timestamp = DateTime.fromMillisecondsSinceEpoch(
+              docData['timestamp_ms'] as int);
+        }
 
-          data.add(SensorData(
-            value: (value as num).toDouble(),
-            timestamp: timestamp,
-          ));
+        if (value != null && timestamp != null) {
+          if (timestamp.isAfter(startOfDay) && timestamp.isBefore(endOfDay)) {
+            data.add(SensorData(
+              value: (value as num).toDouble(),
+              timestamp: timestamp,
+            ));
+          }
         }
       }
 
-      print('✅ Found ${data.length} data points for $sensorKey');
+      data.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       setState(() {
         sensorHistory[sensorKey] = data;
       });
     } catch (e) {
-      print('❌ Error fetching data by date: $e');
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -283,81 +247,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // ✅ Buoy Selector (ใหม่)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  color: Colors.white,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.water, color: Colors.blue, size: 20),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Select Buoy:',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: isLoadingBuoys
-                            ? const Center(
-                                child: SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                              )
-                            : Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 4),
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.blue),
-                                  borderRadius: BorderRadius.circular(8),
-                                  color: Colors.blue.withOpacity(0.05),
-                                ),
-                                child: DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    value: selectedBuoyId,
-                                    isExpanded: true,
-                                    icon: const Icon(Icons.arrow_drop_down,
-                                        color: Colors.blue),
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.black87,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    items: availableBuoys.map((String buoyId) {
-                                      return DropdownMenuItem<String>(
-                                        value: buoyId,
-                                        child: Text(buoyId.toUpperCase()),
-                                      );
-                                    }).toList(),
-                                    onChanged: (String? newValue) {
-                                      if (newValue != null) {
-                                        setState(() {
-                                          selectedBuoyId = newValue;
-                                          // รีเซ็ตวันที่เมื่อเปลี่ยนทุ่น
-                                          selectedDates
-                                              .updateAll((key, value) => null);
-                                        });
-                                        _fetchSensorData();
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const Divider(height: 1),
-
-                // Period selector
+                // ปุ่ม Day / Week / Month
                 Container(
                   padding: const EdgeInsets.all(16),
                   color: Colors.white,
@@ -371,27 +261,29 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                     ],
                   ),
                 ),
-
-                // Scrollable graphs
+                // กราฟ
                 Expanded(
                   child: RefreshIndicator(
                     onRefresh: _fetchSensorData,
                     child: ListView(
                       padding: const EdgeInsets.all(16),
                       children: [
+                        _buildSensorCard('Temperature Sensor', '°C',
+                            'temperature'), // -20 – 105
+                        const SizedBox(height: 16),
+                        _buildSensorCard('PH Sensor', '', 'ph'), // 0 – 14
+                        const SizedBox(height: 16),
                         _buildSensorCard(
-                            'Temperature Sensor', '°C', 'temperature'),
-                        const SizedBox(height: 16),
-                        _buildSensorCard('PH Sensor', '', 'ph'),
+                            'Turbidity Sensor', 'NTU', 'turbidity'), // 0 – 1000
                         const SizedBox(height: 16),
                         _buildSensorCard(
-                            'Turbidity Sensor', 'NTU', 'turbidity'),
+                            'EC Sensor', 'μS/cm', 'ec'), // 0 – 2240
                         const SizedBox(height: 16),
-                        _buildSensorCard('EC Sensor', 'μS/cm', 'ec'),
+                        _buildSensorCard(
+                            'Rain Sensor', 'mm', 'rainfall'), // 0 – 102
                         const SizedBox(height: 16),
-                        _buildSensorCard('Rain Sensor', 'mm', 'rainfall'),
-                        const SizedBox(height: 16),
-                        _buildSensorCard('TDS Sensor', 'ppm', 'tds'),
+                        _buildSensorCard(
+                            'TDS Sensor', 'ppm', 'tds'), // 0 – 1500
                       ],
                     ),
                   ),
@@ -409,7 +301,6 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
         onTap: () {
           setState(() {
             selectedPeriod = period;
-            selectedDates.updateAll((key, value) => null);
           });
           _fetchSensorData();
         },
@@ -434,7 +325,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
   }
 
   Widget _buildSensorCard(String title, String unit, String sensorKey) {
-    List<SensorData> data = sensorHistory[sensorKey] ?? [];
+    final List<SensorData> data = sensorHistory[sensorKey] ?? [];
 
     if (data.isEmpty) {
       return Container(
@@ -468,16 +359,10 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
               ],
             ),
             const SizedBox(height: 80),
-            Center(
-              child: Column(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.grey[400], size: 40),
-                  const SizedBox(height: 8),
-                  Text(
-                    'No data available for $selectedBuoyId',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                  ),
-                ],
+            const Center(
+              child: Text(
+                'No data available',
+                style: TextStyle(color: Colors.grey),
               ),
             ),
             const SizedBox(height: 80),
@@ -486,23 +371,38 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       );
     }
 
-    List<double> values = data.map((e) => e.value).toList();
-    double minValue = values.reduce((a, b) => a < b ? a : b);
-    double maxValue = values.reduce((a, b) => a > b ? a : b);
+    // ถ้ามี range คงที่ให้ใช้เลย
+    final _SensorRange? fixedRange = sensorRanges[sensorKey];
 
-    double range = maxValue - minValue;
-    double padding = range * 0.15;
+    // สร้างจุด
+    final List<FlSpot> spots = [];
+    for (int i = 0; i < data.length; i++) {
+      double y = data[i].value;
 
-    if (range < 1) {
-      padding = 2;
+      // ถ้ามี range คงที่ → clamp แค่ตอนแสดง
+      if (fixedRange != null) {
+        if (y < fixedRange.min) y = fixedRange.min;
+        if (y > fixedRange.max) y = fixedRange.max;
+      }
+
+      spots.add(FlSpot(i.toDouble(), y));
     }
 
-    double minY = minValue - padding;
-    double maxY = maxValue + padding;
-
-    List<FlSpot> spots = [];
-    for (int i = 0; i < data.length; i++) {
-      spots.add(FlSpot(i.toDouble(), data[i].value));
+    // ถ้าไม่มี range คงที่ → คำนวณจากข้อมูล
+    double minY;
+    double maxY;
+    if (fixedRange != null) {
+      minY = fixedRange.min;
+      maxY = fixedRange.max;
+    } else {
+      final values = data.map((e) => e.value).toList();
+      double minValue = values.reduce((a, b) => a < b ? a : b);
+      double maxValue = values.reduce((a, b) => a > b ? a : b);
+      double range = maxValue - minValue;
+      double padding = range * 0.15;
+      if (range < 1) padding = 2;
+      minY = minValue - padding;
+      maxY = maxValue + padding;
     }
 
     return Container(
@@ -521,6 +421,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // title + date picker
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -548,30 +449,82 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
             ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 200,
+            height: 220,
             child: LineChart(
               LineChartData(
-                gridData: FlGridData(show: false),
+                minY: minY,
+                maxY: maxY,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: true,
+                  horizontalInterval:
+                      _getHorizontalInterval(sensorKey, minY, maxY),
+                  verticalInterval:
+                      data.length > 6 ? (data.length / 6).ceilToDouble() : 1,
+                  getDrawingHorizontalLine: (value) {
+                    return FlLine(
+                      color: Colors.grey.withOpacity(0.2),
+                      strokeWidth: 1,
+                    );
+                  },
+                  getDrawingVerticalLine: (value) {
+                    return FlLine(
+                      color: Colors.grey.withOpacity(0.12),
+                      strokeWidth: 1,
+                    );
+                  },
+                ),
+                // ✅ เส้น max/min
+                extraLinesData: fixedRange != null
+                    ? ExtraLinesData(
+                        horizontalLines: [
+                          HorizontalLine(
+                            y: fixedRange.max,
+                            color: Colors.red.withOpacity(0.4),
+                            strokeWidth: 1.5,
+                            dashArray: [4, 4],
+                            label: HorizontalLineLabel(
+                              show: true,
+                              alignment: Alignment.topRight,
+                              labelResolver: (line) => 'max ${fixedRange.max}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ),
+                          HorizontalLine(
+                            y: fixedRange.min,
+                            color: Colors.green.withOpacity(0.4),
+                            strokeWidth: 1.5,
+                            dashArray: [4, 4],
+                            label: HorizontalLineLabel(
+                              show: true,
+                              alignment: Alignment.bottomRight,
+                              labelResolver: (line) => 'min ${fixedRange.min}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : const ExtraLinesData(),
                 titlesData: FlTitlesData(
                   leftTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
-                      reservedSize: 50,
-                      interval: (maxY - minY) / 2,
+                      reservedSize: 48,
                       getTitlesWidget: (value, meta) {
-                        double midValue = (minY + maxY) / 2;
-                        if ((value - minY).abs() < 0.01 ||
-                            (value - midValue).abs() < 0.01 ||
-                            (value - maxY).abs() < 0.01) {
-                          return Text(
-                            value.toStringAsFixed(1),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          );
-                        }
-                        return const SizedBox.shrink();
+                        // แสดงทุกเส้นที่เราวาดไว้
+                        return Text(
+                          value.toStringAsFixed(0),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey,
+                          ),
+                        );
                       },
                     ),
                   ),
@@ -600,16 +553,39 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                       },
                     ),
                   ),
-                  rightTitles: AxisTitles(
+                  rightTitles: const AxisTitles(
                     sideTitles: SideTitles(showTitles: false),
                   ),
-                  topTitles: AxisTitles(
+                  topTitles: const AxisTitles(
                     sideTitles: SideTitles(showTitles: false),
                   ),
                 ),
                 borderData: FlBorderData(show: false),
-                minY: minY,
-                maxY: maxY,
+                lineTouchData: LineTouchData(
+                  enabled: true,
+                  handleBuiltInTouches: true,
+                  touchTooltipData: LineTouchTooltipData(
+                    tooltipBgColor: Colors.black.withOpacity(0.7),
+                    getTooltipItems: (touchedSpots) {
+                      return touchedSpots.map((barSpot) {
+                        final index = barSpot.x.toInt();
+                        if (index < 0 || index >= data.length) {
+                          return null;
+                        }
+                        final d = data[index];
+                        final timeStr =
+                            DateFormat('dd/MM HH:mm').format(d.timestamp);
+                        return LineTooltipItem(
+                          '$timeStr\n${d.value.toStringAsFixed(2)} $unit',
+                          const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        );
+                      }).toList();
+                    },
+                  ),
+                ),
                 lineBarsData: [
                   LineChartBarData(
                     spots: spots,
@@ -619,6 +595,7 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                     dotData: FlDotData(
                       show: true,
                       getDotPainter: (spot, percent, barData, index) {
+                        // จุดล่าสุดใหญ่หน่อย
                         if (index == spots.length - 1) {
                           return FlDotCirclePainter(
                             radius: 5,
@@ -628,8 +605,10 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
                           );
                         }
                         return FlDotCirclePainter(
-                          radius: 0,
-                          color: Colors.transparent,
+                          radius: 3,
+                          color: Colors.blue,
+                          strokeWidth: 1,
+                          strokeColor: Colors.white,
                         );
                       },
                     ),
@@ -645,6 +624,27 @@ class _SensorGraphsPageState extends State<SensorGraphsPage> {
         ],
       ),
     );
+  }
+
+  // กำหนด interval ของเส้นแนวนอนให้สวยตามชนิด sensor
+  double _getHorizontalInterval(String sensorKey, double minY, double maxY) {
+    final range = maxY - minY;
+    switch (sensorKey) {
+      case 'ph':
+        return 2;
+      case 'tds':
+        return 300;
+      case 'ec':
+        return 500;
+      case 'turbidity':
+        return 200;
+      case 'temperature':
+        return 10;
+      case 'rainfall':
+        return 20;
+      default:
+        return range / 4;
+    }
   }
 
   Widget _buildDateDropdown(String sensorKey) {
@@ -708,4 +708,11 @@ class SensorData {
     required this.value,
     required this.timestamp,
   });
+}
+
+// class ช่วยเก็บช่วงค่า
+class _SensorRange {
+  final double min;
+  final double max;
+  const _SensorRange(this.min, this.max);
 }

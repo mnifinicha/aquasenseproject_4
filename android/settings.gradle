@@ -7,6 +7,7 @@ pluginManagement {
         return flutterSdkPath
     }()
 
+    // ← อันนี้จำเป็นสำหรับ Flutter
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
@@ -17,11 +18,17 @@ pluginManagement {
 }
 
 plugins {
+    // ของ Flutter
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-    id "com.android.application" version "8.1.0" apply false
-    // START: FlutterFire Configuration
+
+    // 👇 ตรงนี้คือจุดที่ Flutter เช็กเวอร์ชัน
+    id "com.android.application" version "8.1.1" apply false
+    id "com.android.library" version "8.1.1" apply false
+
+    // Firebase
     id "com.google.gms.google-services" version "4.3.15" apply false
-    // END: FlutterFire Configuration
+
+    // Kotlin (ของคุณเดิมใช้ 1.8.22 ก็ให้ใช้เหมือนเดิม)
     id "org.jetbrains.kotlin.android" version "1.8.22" apply false
 }
 
